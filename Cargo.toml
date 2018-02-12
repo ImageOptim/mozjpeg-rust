@@ -1,0 +1,19 @@
+[package]
+authors = ["Kornel <kornel@geekhood.net>"]
+categories = ["multimedia::images"]
+description = "Higher-level wrapper for Mozilla's JPEG library"
+documentation = "https://docs.rs/mozjpeg"
+homepage = "https://github.com/ImageOptim/mozjpeg-rust"
+include = ["/README.md", "/Cargo.toml", "/src/*.rs"]
+keywords = ["jpeg", "libjpeg", "image", "encoder", "decoder"]
+license = "IJG"
+name = "mozjpeg"
+readme = "README.md"
+repository = "https://github.com/ImageOptim/mozjpeg-rust"
+version = "0.8.0"
+
+[dependencies]
+libc = "0.2.31"
+mozjpeg-sys = "0.5.3"
+rgb = "0.8.7"
+

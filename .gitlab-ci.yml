@@ -1,0 +1,14 @@
+# This file is a template, and might need editing before it works on your project.
+# Unofficial language image. Look for the different tagged releases at:
+# https://hub.docker.com/r/scorpil/rust/tags/
+image: "scorpil/rust:stable"
+
+before_script:
+  - apt-get update
+  - apt-get install -yqq --no-install-recommends build-essential nasm
+
+# Use cargo to test the project
+test:cargo:
+  script:
+  - rustc --version && cargo --version      # Print version info for debugging
+  - cargo test --verbose
