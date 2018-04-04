@@ -3,6 +3,9 @@ extern crate mozjpeg_sys as ffi;
 
 use self::libc::c_int;
 
+/// Marker number identifier (APP0-APP14 and commment markers)
+///
+/// For actual contents of markers, see `MarkerData`
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Marker {
     COM,

@@ -1,4 +1,6 @@
-
+//! You don't need to use this module directly.
+//!
+//! See `mozjpeg::Decompress` struct instead.
 extern crate libc;
 extern crate mozjpeg_sys as ffi;
 
@@ -8,6 +10,7 @@ use errormgr::ErrorMgr;
 use errormgr::PanicingErrorMgr;
 use component::CompInfoExt;
 use component::CompInfo;
+use colorspace::ColorSpace;
 use colorspace::ColorSpaceExt;
 use vec::VecUninitExtender;
 use self::ffi::JPEG_LIB_VERSION;
@@ -28,7 +31,16 @@ use std::path::Path;
 const MAX_MCU_HEIGHT: usize = 16;
 const MAX_COMPONENTS: usize = 4;
 
+/// Empty list of markers
+///
+/// By default markers are not read from JPEG files.
 pub const NO_MARKERS: &'static [Marker] = &[];
+
+/// App 0-14 and comment markers
+///
+/// ```rust,ignore
+/// Decompress::with_markers(ALL_MARKERS)
+/// ```
 pub const ALL_MARKERS: &'static [Marker] = &[
     Marker::APP(0), Marker::APP(1), Marker::APP(2), Marker::APP(3), Marker::APP(4),
     Marker::APP(5), Marker::APP(6), Marker::APP(7), Marker::APP(8), Marker::APP(9),
@@ -36,6 +48,7 @@ pub const ALL_MARKERS: &'static [Marker] = &[
     Marker::COM,
 ];
 
+/// Use `Decompress` static methods instead of creating this directly
 pub struct DecompressConfig<'markers> {
     save_markers: &'markers [Marker],
     err: Option<ErrorMgr>
@@ -87,7 +100,7 @@ impl<'markers> DecompressConfig<'markers> {
     }
 
     #[inline]
-    pub fn from_mem(self, mem: &[u8]) -> io::Result<Decompress> {
+    pub fn from_mem<'src>(self, mem: &'src [u8]) -> io::Result<Decompress<'src>> {
         let mut d = self.create();
         d.set_mem_src(mem);
         d.read_header()?;
@@ -95,19 +108,28 @@ impl<'markers> DecompressConfig<'markers> {
     }
 }
 
-pub struct Decompress<'mem_src> {
+/// Get pixels out of a JPEG file
+///
+/// High-level wrapper for `jpeg_decompress_struct`
+///
+/// ```rust,ignore
+/// let d = Decompress::new_path("image.jpg");
+/// ```
+pub struct Decompress<'src> {
     cinfo: jpeg_decompress_struct,
     own_error: Box<ErrorMgr>,
     own_file: Option<Box<File>>,
-    _mem_marker: PhantomData<&'mem_src [u8]>, // Informs borrow checker that memory given in mem_src must outlive jpeg_decompress_struct
-    _file_marker: PhantomData<&'mem_src mut File>,
+    // Informs the borrow checker that the memory given in src must outlive the `jpeg_decompress_struct`
+    _mem_marker: PhantomData<&'src [u8]>,
 }
 
+/// Marker type and data slice returned by `MarkerIter`
 pub struct MarkerData<'a> {
     pub marker: Marker,
     pub data: &'a [u8],
 }
 
+/// See `Decompress.markers()`
 pub struct MarkerIter<'a> {
     marker_list: *mut ffi::jpeg_marker_struct,
     _uhh: ::std::marker::PhantomData<MarkerData<'a>>,
@@ -130,7 +152,7 @@ impl<'a> Iterator for MarkerIter<'a> {
     }
 }
 
-impl<'mem_src> Decompress<'mem_src> {
+impl<'src> Decompress<'src> {
     #[inline]
     pub fn with_err(err: ErrorMgr) -> DecompressConfig<'static> {
         Self::config().with_err(err)
@@ -155,7 +177,7 @@ impl<'mem_src> Decompress<'mem_src> {
     }
 
     #[inline]
-    pub fn new_mem(mem: &'mem_src [u8]) -> io::Result<Self> {
+    pub fn new_mem(mem: &'src [u8]) -> io::Result<Self> {
         Self::config().from_mem(mem)
     }
 
@@ -171,7 +193,6 @@ impl<'mem_src> Decompress<'mem_src> {
                 own_error: Box::new(err),
                 own_file: None,
                 _mem_marker: PhantomData,
-                _file_marker: PhantomData,
             };
             newself.cinfo.common.err = &mut *newself.own_error;
 
@@ -183,7 +204,6 @@ impl<'mem_src> Decompress<'mem_src> {
     }
 
     pub fn components(&self) -> &[CompInfo] {
-
         unsafe {
             slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize)
         }
@@ -208,7 +228,7 @@ impl<'mem_src> Decompress<'mem_src> {
         Ok(())
     }
 
-    fn set_mem_src(&mut self, file: &'mem_src [u8]) {
+    fn set_mem_src(&mut self, file: &'src [u8]) {
         unsafe {
             ffi::jpeg_mem_src(&mut self.cinfo, file.as_ptr(), file.len() as c_ulong);
         }
@@ -232,6 +252,7 @@ impl<'mem_src> Decompress<'mem_src> {
         self.cinfo.output_gamma
     }
 
+    /// Markers are available only if you enable them via `with_markers()`
     pub fn markers(&self) -> MarkerIter {
         MarkerIter {
             marker_list: self.cinfo.marker_list,
@@ -266,22 +287,22 @@ impl<'mem_src> Decompress<'mem_src> {
     }
 
     /// Start decompression with conversion to RGB
-    pub fn rgb(mut self) -> io::Result<DecompressStarted<'mem_src>> {
+    pub fn rgb(mut self) -> io::Result<DecompressStarted<'src>> {
         self.cinfo.out_color_space = ffi::J_COLOR_SPACE::JCS_RGB;
         return DecompressStarted::start_decompress(self);
     }
 
-    pub fn raw(mut self) -> io::Result<DecompressStarted<'mem_src>> {
+    pub fn raw(mut self) -> io::Result<DecompressStarted<'src>> {
         self.set_raw_data_out(true);
         return DecompressStarted::start_decompress(self);
     }
 
-    fn out_color_space(&self) -> COLOR_SPACE {
+    fn out_color_space(&self) -> ColorSpace {
         self.cinfo.out_color_space
     }
 
     /// Start decompression without colorspace conversion
-    pub fn image(self) -> io::Result<Format<'mem_src>> {
+    pub fn image(self) -> io::Result<Format<'src>> {
         use ffi::J_COLOR_SPACE::*;
         match self.out_color_space() {
             JCS_RGB => Ok(Format::RGB(DecompressStarted::start_decompress(self)?)),
@@ -292,18 +313,20 @@ impl<'mem_src> Decompress<'mem_src> {
     }
 }
 
+/// See `Decompress.image()`
 pub enum Format<'a> {
     RGB(DecompressStarted<'a>),
     Gray(DecompressStarted<'a>),
     CMYK(DecompressStarted<'a>),
 }
 
-pub struct DecompressStarted<'mem_src> {
-    dec: Decompress<'mem_src>,
+/// See methods on `Decompress`
+pub struct DecompressStarted<'src> {
+    dec: Decompress<'src>,
 }
 
-impl<'mem_src> DecompressStarted<'mem_src> {
-    fn start_decompress(mut dec: Decompress<'mem_src>) -> io::Result<Self> {
+impl<'src> DecompressStarted<'src> {
+    fn start_decompress(mut dec: Decompress<'src>) -> io::Result<Self> {
         let res = unsafe { ffi::jpeg_start_decompress(&mut dec.cinfo) };
         if 0 != res {
             Ok(DecompressStarted {
@@ -314,7 +337,7 @@ impl<'mem_src> DecompressStarted<'mem_src> {
         }
     }
 
-    fn out_color_space(&self) -> COLOR_SPACE {
+    pub fn color_space(&self) -> ColorSpace {
         self.dec.out_color_space()
     }
 
@@ -366,20 +389,20 @@ impl<'mem_src> DecompressStarted<'mem_src> {
         }
     }
 
-    pub fn output_width(&self) -> usize {
+    pub fn width(&self) -> usize {
         self.dec.cinfo.output_width as usize
     }
 
-    pub fn output_height(&self) -> usize {
+    pub fn height(&self) -> usize {
         self.dec.cinfo.output_height as usize
     }
 
     pub fn read_scanlines<T: Copy>(&mut self) -> Option<Vec<T>> {
-        let num_components = self.out_color_space().num_components();
+        let num_components = self.color_space().num_components();
         assert_eq!(num_components, mem::size_of::<T>());
-        let width = self.output_width();
-        let height = self.output_height();
-        let mut image_dst:Vec<T> = Vec::with_capacity(self.output_height() * width);
+        let width = self.width();
+        let height = self.height();
+        let mut image_dst:Vec<T> = Vec::with_capacity(self.height() * width);
         unsafe {
             image_dst.extend_uninit(height * width);
 
@@ -414,7 +437,7 @@ impl<'mem_src> DecompressStarted<'mem_src> {
 }
 
 
-impl<'mem_src> Drop for Decompress<'mem_src> {
+impl<'src> Drop for Decompress<'src> {
     fn drop(&mut self) {
         unsafe {
             ffi::jpeg_destroy_decompress(&mut self.cinfo);
@@ -509,8 +532,8 @@ fn read_file_rgb() {
     assert_eq!(1, dinfo.markers().count());
 
     let mut dinfo = dinfo.rgb().unwrap();
-    assert_eq!(ColorSpace::JCS_RGB, dinfo.out_color_space());
-    assert_eq!(dinfo.components().len(), dinfo.out_color_space().num_components() as usize);
+    assert_eq!(ColorSpace::JCS_RGB, dinfo.color_space());
+    assert_eq!(dinfo.components().len(), dinfo.color_space().num_components() as usize);
 
     let bitmap:Vec<(u8,u8,u8)> = dinfo.read_scanlines().unwrap();
     assert_eq!(bitmap.len(), 45*30);

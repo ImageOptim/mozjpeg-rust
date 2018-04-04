@@ -27,6 +27,9 @@ use ::std::cmp::min;
 const MAX_MCU_HEIGHT: usize = 16;
 const MAX_COMPONENTS: usize = 4;
 
+/// Create a new JPEG file from pixels
+///
+/// Wrapper for `jpeg_compress_struct`
 pub struct Compress {
     cinfo: jpeg_compress_struct,
     own_err: Box<ErrorMgr>,

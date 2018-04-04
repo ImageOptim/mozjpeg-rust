@@ -15,7 +15,6 @@ pub use colorspace::ColorSpace;
 pub use colorspace::ColorSpaceExt;
 pub use marker::Marker;
 pub use self::ffi::DCTSIZE;
-pub use self::ffi::J_COLOR_SPACE as COLOR_SPACE;
 pub use self::ffi::JPEG_LIB_VERSION;
 use self::ffi::J_INT_PARAM;
 use self::ffi::J_BOOLEAN_PARAM;
@@ -36,7 +35,7 @@ mod marker;
 mod vec;
 /// Quantization table presets from MozJPEG
 pub mod qtable;
-mod decompress;
+pub mod decompress;
 mod compress;
 mod component;
 mod colorspace;
