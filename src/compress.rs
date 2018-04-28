@@ -107,20 +107,20 @@ impl Compress {
     }
 
     pub fn write_scanlines(&mut self, image_src: &[u8]) -> bool {
-        if 0 != self.cinfo.raw_data_in {
-            panic!("Raw data set");
-        }
+        assert_eq!(0, self.cinfo.raw_data_in);
+        assert!(self.cinfo.input_components > 0);
+        assert!(self.cinfo.image_width > 0);
 
-        let width = self.cinfo.image_width as usize;
-        let mut row_pointers = [ptr::null(); MAX_MCU_HEIGHT];
-        for rows in image_src.chunks(row_pointers.len() * width) {
-            for (i, row) in rows.chunks(width).enumerate() {
-                debug_assert!(i < row_pointers.len());
-                row_pointers[i] = row.as_ptr();
+        let byte_width = self.cinfo.image_width as usize * self.cinfo.input_components as usize;
+        let mut row_pointers = ArrayVec::<[_; MAX_MCU_HEIGHT]>::new();
+        for rows in image_src.chunks(row_pointers.capacity() * byte_width) {
+            for row in rows.chunks(byte_width) {
+                debug_assert!(row.len() == byte_width);
+                row_pointers.push(row.as_ptr());
             }
 
             unsafe {
-                let rows_written = ffi::jpeg_write_scanlines(&mut self.cinfo, row_pointers.as_ptr(), rows.len() as u32) as usize;
+                let rows_written = ffi::jpeg_write_scanlines(&mut self.cinfo, row_pointers.as_ptr(), row_pointers.len() as u32) as usize;
                 if rows_written < rows.len() {
                     return false;
                 }
