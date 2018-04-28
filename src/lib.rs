@@ -1,6 +1,5 @@
 #![allow(unused_attributes)]
 #![allow(unused_imports)]
-#[allow(deprecated)]
 
 extern crate libc;
 extern crate mozjpeg_sys as ffi;
@@ -14,21 +13,21 @@ pub use component::CompInfoExt;
 pub use colorspace::ColorSpace;
 pub use colorspace::ColorSpaceExt;
 pub use marker::Marker;
-pub use self::ffi::DCTSIZE;
-pub use self::ffi::JPEG_LIB_VERSION;
-use self::ffi::J_INT_PARAM;
-use self::ffi::J_BOOLEAN_PARAM;
-use self::ffi::JDIMENSION;
-use self::ffi::jpeg_compress_struct;
-use self::ffi::jpeg_common_struct;
-use self::ffi::boolean;
+pub use ffi::DCTSIZE;
+pub use ffi::JPEG_LIB_VERSION;
+use ffi::J_INT_PARAM;
+use ffi::J_BOOLEAN_PARAM;
+use ffi::JDIMENSION;
+use ffi::jpeg_compress_struct;
+use ffi::jpeg_common_struct;
+use ffi::boolean;
 
-use self::libc::{size_t, c_void, c_int, c_ulong, c_uchar};
-use self::libc::free;
-use ::std::slice;
-use ::std::mem;
-use ::std::ptr;
-use ::std::cmp::min;
+use std::os::raw::{c_void, c_int, c_ulong, c_uchar};
+use libc::free;
+use std::slice;
+use std::mem;
+use std::ptr;
+use std::cmp::min;
 
 mod errormgr;
 mod marker;

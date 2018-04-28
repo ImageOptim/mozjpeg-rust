@@ -1,8 +1,5 @@
 #![allow(deprecated)]
 
-extern crate libc;
-extern crate mozjpeg_sys as ffi;
-
 use errormgr::ErrorMgr;
 use errormgr::PanicingErrorMgr;
 use component::CompInfoExt;
@@ -11,18 +8,22 @@ use marker::Marker;
 use colorspace::ColorSpace;
 use colorspace::ColorSpaceExt;
 use qtable::QTable;
-use self::ffi::JPEG_LIB_VERSION;
-use self::ffi::J_INT_PARAM;
-use self::ffi::J_BOOLEAN_PARAM;
-use self::ffi::jpeg_compress_struct;
-use self::ffi::boolean;
-use self::ffi::DCTSIZE;
-use self::ffi::JDIMENSION;
-use self::libc::{size_t, c_void, c_int, c_uint, c_ulong, c_uchar, free};
-use ::std::slice;
-use ::std::mem;
-use ::std::ptr;
-use ::std::cmp::min;
+use ffi;
+use ffi::JPEG_LIB_VERSION;
+use ffi::J_INT_PARAM;
+use ffi::J_BOOLEAN_PARAM;
+use ffi::jpeg_compress_struct;
+use ffi::boolean;
+use ffi::DCTSIZE;
+use ffi::JDIMENSION;
+use std::os::raw::{c_int, c_uint, c_ulong, c_uchar};
+use libc::free;
+use libc::c_void;
+use arrayvec::ArrayVec;
+use std::slice;
+use std::mem;
+use std::ptr;
+use std::cmp::min;
 
 const MAX_MCU_HEIGHT: usize = 16;
 const MAX_COMPONENTS: usize = 4;
@@ -64,7 +65,7 @@ impl Compress {
 
             newself.cinfo.common.err = &mut *newself.own_err;
 
-            let s = mem::size_of_val(&newself.cinfo) as size_t;
+            let s = mem::size_of_val(&newself.cinfo) as usize;
             ffi::jpeg_CreateCompress(&mut newself.cinfo, JPEG_LIB_VERSION, s);
 
             newself.cinfo.in_color_space = color_space;
