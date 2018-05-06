@@ -232,6 +232,14 @@ impl Compress {
         }
     }
 
+    /// Reset to libjpeg v6 settings
+    pub fn set_fastest_defaults(&mut self) {
+        unsafe {
+            ffi::jpeg_c_set_int_param(&mut self.cinfo, J_INT_PARAM::JINT_COMPRESS_PROFILE, ffi::JINT_COMPRESS_PROFILE_VALUE::JCP_FASTEST as c_int);
+            ffi::jpeg_set_defaults(&mut self.cinfo);
+        }
+    }
+
     pub fn set_raw_data_in(&mut self, opt: bool) {
         self.cinfo.raw_data_in = opt as boolean;
     }
