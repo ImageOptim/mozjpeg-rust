@@ -212,6 +212,11 @@ impl Compress {
         }
     }
 
+    /// Set to `false` to make files larger for no reason
+    pub fn set_optimize_coding(&mut self, opt: bool) {
+        self.cinfo.optimize_coding = opt as boolean;
+    }
+
     pub fn set_use_scans_in_trellis(&mut self, opt: bool) {
         unsafe {
             ffi::jpeg_c_set_bool_param(&mut self.cinfo, J_BOOLEAN_PARAM::JBOOLEAN_USE_SCANS_IN_TRELLIS, opt as boolean);
