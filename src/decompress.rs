@@ -23,6 +23,7 @@ use std::slice;
 use std::mem;
 use std::ptr;
 use std::cmp::min;
+#[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 use std::fs::File;
 use std::io;
