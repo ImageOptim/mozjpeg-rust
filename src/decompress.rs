@@ -165,6 +165,7 @@ impl<'src> Decompress<'src> {
     }
 
     #[inline]
+    #[cfg(unix)]
     /// Decode file at path
     pub fn new_path<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::config().from_path(path)
@@ -504,6 +505,7 @@ fn read_file() {
 }
 
 #[test]
+#[cfg(unix)]
 fn no_markers() {
     use std::fs::File;
     use std::io::Read;
