@@ -121,7 +121,7 @@ impl Compress {
 
             unsafe {
                 let rows_written = ffi::jpeg_write_scanlines(&mut self.cinfo, row_pointers.as_ptr(), row_pointers.len() as u32) as usize;
-                if rows_written < rows.len() {
+                if rows_written < row_pointers.len() {
                     return false;
                 }
             }
