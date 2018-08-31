@@ -220,7 +220,7 @@ impl<'src> Decompress<'src> {
     #[cfg(unix)]
     fn set_file_src(&mut self, file: Box<File>) -> io::Result<()> {
         unsafe {
-            let fh = fdopen(file.as_raw_fd(), b"rb".as_ptr() as *const i8);
+            let fh = fdopen(file.as_raw_fd(), b"rb".as_ptr() as *const _);
             if fh.is_null() {
                 return Err(io::Error::last_os_error());
             }
