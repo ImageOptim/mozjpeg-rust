@@ -313,6 +313,14 @@ impl<'src> Decompress<'src> {
             format => Err(io::Error::new(io::ErrorKind::Other, format!("{:?}", format))),
         }
     }
+
+    /// Rescales the output image by `numerator / 8` during decompression.
+    /// `numerator` must be between 1 and 16. 
+    pub fn scale(&mut self, numerator: u8) {
+        assert!(1 <= numerator && numerator <= 16, "numerator must be between 1 and 16");
+        self.cinfo.scale_num = numerator.into();
+        self.cinfo.scale_denom = 8;
+    }
 }
 
 /// See `Decompress.image()`
