@@ -49,6 +49,17 @@ pub const ALL_MARKERS: &'static [Marker] = &[
     Marker::COM,
 ];
 
+/// Algorithm for the DCT step.
+#[derive(Clone, Copy, Debug)]
+pub enum DctMethod {
+    /// slow but accurate integer algorithm
+    IntegerSlow,
+    /// faster, less accurate integer method
+    IntegerFast,
+    /// floating-point method
+    Float,
+}
+
 /// Use `Decompress` static methods instead of creating this directly
 pub struct DecompressConfig<'markers> {
     save_markers: &'markers [Marker],
@@ -294,6 +305,38 @@ impl<'src> Decompress<'src> {
         return DecompressStarted::start_decompress(self);
     }
 
+    /// Start decompression with conversion to grayscale.
+    pub fn grayscale(mut self) -> io::Result<DecompressStarted<'src>> {
+        self.cinfo.out_color_space = ffi::J_COLOR_SPACE::JCS_GRAYSCALE;
+        return DecompressStarted::start_decompress(self);
+    }
+
+    /// Selects the algorithm used for the DCT step.
+    pub fn dct_method(&mut self, method: DctMethod) {
+        self.cinfo.dct_method = match method {
+            DctMethod::IntegerSlow => ffi::J_DCT_METHOD::JDCT_ISLOW,
+            DctMethod::IntegerFast => ffi::J_DCT_METHOD::JDCT_IFAST,
+            DctMethod::Float => ffi::J_DCT_METHOD::JDCT_FLOAT,
+        }
+    }
+
+    // If `true`, do careful upsampling of chroma components.  If `false`,
+    // a faster but sloppier method is used.  Default is `true`.  The visual
+    // impact of the sloppier method is often very small.
+    pub fn do_fancy_upsampling(&mut self, value: bool) {
+        self.cinfo.do_fancy_upsampling = value as ffi::boolean;
+    }
+
+    /// If `true`, interblock smoothing is applied in early stages of decoding
+    /// progressive JPEG files; if `false`, not.  Default is `true`.  Early
+    /// progression stages look "fuzzy" with smoothing, "blocky" without.
+    /// In any case, block smoothing ceases to be applied after the first few
+    /// AC coefficients are known to full accuracy, so it is relevant only
+    /// when using buffered-image mode for progressive images.
+    pub fn do_block_smoothing(&mut self, value: bool) {
+        self.cinfo.do_block_smoothing = value as ffi::boolean;
+    }
+
     pub fn raw(mut self) -> io::Result<DecompressStarted<'src>> {
         self.set_raw_data_out(true);
         return DecompressStarted::start_decompress(self);
@@ -316,6 +359,7 @@ impl<'src> Decompress<'src> {
 
     /// Rescales the output image by `numerator / 8` during decompression.
     /// `numerator` must be between 1 and 16. 
+    /// Thus setting a value of `8` will result in an unscaled image.
     pub fn scale(&mut self, numerator: u8) {
         assert!(1 <= numerator && numerator <= 16, "numerator must be between 1 and 16");
         self.cinfo.scale_num = numerator.into();
