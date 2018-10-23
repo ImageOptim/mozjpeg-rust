@@ -8,7 +8,7 @@ extern crate mozjpeg_sys as ffi;
 pub use compress::Compress;
 pub use compress::ScanMode;
 pub use decompress::{Decompress, NO_MARKERS, ALL_MARKERS};
-pub use decompress::Format;
+pub use decompress::{Format, DctMethod};
 pub use component::CompInfo;
 pub use component::CompInfoExt;
 pub use colorspace::ColorSpace;
