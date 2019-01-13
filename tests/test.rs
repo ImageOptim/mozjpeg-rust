@@ -23,11 +23,11 @@ fn color_jpeg() {
     let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
 
     comp.set_scan_optimization_mode(mozjpeg::ScanMode::AllComponentsTogether);
-    comp.set_size(8, 8);
+    comp.set_size(32, 32);
     comp.set_mem_dest();
     comp.start_compress();
 
-    let lines = vec![128; 8*8*3];
+    let lines = vec![128; 32*32*3];
     comp.write_scanlines(&lines[..]);
 
     comp.finish_compress();

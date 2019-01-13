@@ -19,7 +19,6 @@ use ffi::JDIMENSION;
 use std::os::raw::{c_int, c_uint, c_ulong, c_uchar};
 use libc::free;
 use libc::c_void;
-use arrayvec::ArrayVec;
 use std::slice;
 use std::mem;
 use std::ptr;
@@ -112,16 +111,19 @@ impl Compress {
         assert!(self.cinfo.image_width > 0);
 
         let byte_width = self.cinfo.image_width as usize * self.cinfo.input_components as usize;
-        let mut row_pointers = ArrayVec::<[_; MAX_MCU_HEIGHT]>::new();
-        for rows in image_src.chunks(row_pointers.capacity() * byte_width) {
-            for row in rows.chunks(byte_width) {
+        let mut row_pointers = [ptr::null(); MAX_MCU_HEIGHT];
+        for rows in image_src.chunks(row_pointers.len() * byte_width) {
+            let rows = rows.chunks(byte_width);
+            let row_pointers_len = rows.len();
+
+            for (i, row) in rows.enumerate() {
                 debug_assert!(row.len() == byte_width);
-                row_pointers.push(row.as_ptr());
+                row_pointers[i] = row.as_ptr();
             }
 
             unsafe {
-                let rows_written = ffi::jpeg_write_scanlines(&mut self.cinfo, row_pointers.as_ptr(), row_pointers.len() as u32) as usize;
-                if rows_written < row_pointers.len() {
+                let rows_written = ffi::jpeg_write_scanlines(&mut self.cinfo, row_pointers.as_ptr(), row_pointers_len as u32) as usize;
+                if rows_written < row_pointers_len {
                     return false;
                 }
             }

@@ -2,7 +2,6 @@
 #![allow(unused_imports)]
 
 extern crate libc;
-extern crate arrayvec;
 extern crate mozjpeg_sys as ffi;
 
 pub use compress::Compress;
