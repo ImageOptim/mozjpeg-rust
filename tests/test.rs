@@ -20,40 +20,45 @@ pub fn decompress_jpeg(jpeg: &[u8]) -> Vec<Vec<u8>> {
 
 #[test]
 fn color_jpeg() {
-    let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
+    for size in 1..64 {
+        let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
 
-    comp.set_scan_optimization_mode(mozjpeg::ScanMode::AllComponentsTogether);
-    comp.set_size(8, 8);
-    comp.set_mem_dest();
-    comp.start_compress();
+        comp.set_scan_optimization_mode(mozjpeg::ScanMode::AllComponentsTogether);
+        comp.set_size(size, size);
+        comp.set_mem_dest();
+        comp.start_compress();
 
-    let lines = vec![128; 8*8*3];
-    comp.write_scanlines(&lines[..]);
+        let lines = vec![128; size*size*3];
+        comp.write_scanlines(&lines[..]);
 
-    comp.finish_compress();
-    let jpeg = comp.data_to_vec().unwrap();
+        comp.finish_compress();
+        let jpeg = comp.data_to_vec().unwrap();
 
-    decompress_jpeg(&jpeg);
+        decompress_jpeg(&jpeg);
+    }
 }
 
 #[test]
 fn raw_jpeg() {
-    let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_YCbCr);
+    for size in 1..64 {
+        let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_YCbCr);
 
-    comp.set_scan_optimization_mode(mozjpeg::ScanMode::AllComponentsTogether);
+        comp.set_scan_optimization_mode(mozjpeg::ScanMode::AllComponentsTogether);
 
-    comp.set_raw_data_in(true);
-    comp.set_size(8, 8);
+        comp.set_raw_data_in(true);
+        comp.set_size(size, size);
 
-    comp.set_mem_dest();
-    comp.start_compress();
+        comp.set_mem_dest();
+        comp.start_compress();
 
-    let t = vec![128; 64];
-    let components = vec![&t[..], &t[..], &t[..]];
-    comp.write_raw_data(&components[..]);
+        let rounded_size = (size+7)/8*8;
+        let t = vec![128; rounded_size*rounded_size];
+        let components = vec![&t[..], &t[..], &t[..]];
+        comp.write_raw_data(&components[..]);
 
-    comp.finish_compress();
-    let jpeg = comp.data_to_vec().unwrap();
+        comp.finish_compress();
+        let jpeg = comp.data_to_vec().unwrap();
 
-    decompress_jpeg(&jpeg);
+        decompress_jpeg(&jpeg);
+    }
 }
