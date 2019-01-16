@@ -106,6 +106,7 @@ impl Compress {
         self.cinfo.next_scanline < self.cinfo.image_height
     }
 
+    /// Returns true if all lines in image_src (not necessarily all lines of the image) were written
     pub fn write_scanlines(&mut self, image_src: &[u8]) -> bool {
         assert_eq!(0, self.cinfo.raw_data_in);
         assert!(self.cinfo.input_components > 0);
