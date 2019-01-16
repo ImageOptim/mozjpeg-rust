@@ -29,7 +29,7 @@ fn color_jpeg() {
         comp.start_compress();
 
         let lines = vec![128; size*size*3];
-        comp.write_scanlines(&lines[..]);
+        assert!(comp.write_scanlines(&lines[..]));
 
         comp.finish_compress();
         let jpeg = comp.data_to_vec().unwrap();

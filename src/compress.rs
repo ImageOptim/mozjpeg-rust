@@ -113,8 +113,8 @@ impl Compress {
         assert!(self.cinfo.image_width > 0);
 
         let byte_width = self.cinfo.image_width as usize * self.cinfo.input_components as usize;
-        let mut row_pointers = ArrayVec::<[_; MAX_MCU_HEIGHT]>::new();
-        for rows in image_src.chunks(row_pointers.capacity() * byte_width) {
+        for rows in image_src.chunks(MAX_MCU_HEIGHT * byte_width) {
+            let mut row_pointers = ArrayVec::<[_; MAX_MCU_HEIGHT]>::new();
             for row in rows.chunks(byte_width) {
                 debug_assert!(row.len() == byte_width);
                 row_pointers.push(row.as_ptr());
