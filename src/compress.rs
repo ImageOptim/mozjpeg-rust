@@ -128,7 +128,8 @@ impl Compress {
                 }
             }
         }
-        return true;
+
+        return self.cinfo.next_scanline < self.cinfo.image_height;
     }
 
     pub fn write_raw_data(&mut self, image_src: &[&[u8]]) -> bool {
