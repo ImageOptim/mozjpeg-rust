@@ -1,12 +1,12 @@
 //! You don't need to use this module directly.
 //!
 //! See `mozjpeg::Decompress` struct instead.
-use mozjpeg_sys as ffi;
-
-use self::ffi::jpeg_decompress_struct;
-use self::ffi::DCTSIZE;
-use self::ffi::JPEG_LIB_VERSION;
-use self::ffi::J_COLOR_SPACE as COLOR_SPACE;
+use crate::ffi;
+use crate::ffi::jpeg_decompress_struct;
+use crate::ffi::DCTSIZE;
+use crate::ffi::JPEG_LIB_VERSION;
+use crate::ffi::J_COLOR_SPACE as COLOR_SPACE;
+use std::os::raw::{c_int, c_uchar, c_ulong, c_void};
 use crate::colorspace::ColorSpace;
 use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
@@ -21,7 +21,6 @@ use std::fs::File;
 use std::io;
 use std::marker::PhantomData;
 use std::mem;
-use std::os::raw::{c_int, c_uchar, c_ulong, c_void};
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
@@ -208,7 +207,7 @@ impl<'src> Decompress<'src> {
             };
             newself.cinfo.common.err = &mut *newself.own_error;
 
-            let s = mem::size_of_val(&newself.cinfo) as usize;
+            let s = mem::size_of_val(&newself.cinfo);
             ffi::jpeg_CreateDecompress(&mut newself.cinfo, JPEG_LIB_VERSION, s);
 
             newself
@@ -386,9 +385,7 @@ impl<'src> DecompressStarted<'src> {
     fn start_decompress(mut dec: Decompress<'src>) -> io::Result<Self> {
         let res = unsafe { ffi::jpeg_start_decompress(&mut dec.cinfo) };
         if 0 != res {
-            Ok(DecompressStarted {
-                dec
-            })
+            Ok(DecompressStarted { dec })
         } else {
             Err(io::Error::new(io::ErrorKind::Other, format!("JPEG err {}", res)))
         }

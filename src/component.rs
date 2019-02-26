@@ -1,7 +1,5 @@
-extern crate mozjpeg_sys as ffi;
 use crate::qtable::QTable;
-
-use self::ffi::DCTSIZE;
+use crate::ffi::DCTSIZE;
 pub use crate::ffi::jpeg_component_info as CompInfo;
 
 pub trait CompInfoExt {

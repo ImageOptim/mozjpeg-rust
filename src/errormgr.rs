@@ -1,9 +1,7 @@
-#![feature(core)]
-extern crate mozjpeg_sys as ffi;
-
-use self::ffi::jpeg_common_struct;
-pub use self::ffi::jpeg_error_mgr as ErrorMgr;
-use ::std::mem;
+use crate::ffi;
+use crate::ffi::jpeg_common_struct;
+pub use crate::ffi::jpeg_error_mgr as ErrorMgr;
+use std::mem;
 
 pub trait PanicingErrorMgr {
     fn new() -> ErrorMgr {

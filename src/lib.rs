@@ -1,7 +1,7 @@
 #![allow(unused_attributes)]
 #![allow(unused_imports)]
 
-extern crate mozjpeg_sys as ffi;
+use mozjpeg_sys as ffi;
 
 pub use crate::colorspace::ColorSpace;
 pub use crate::colorspace::ColorSpaceExt;

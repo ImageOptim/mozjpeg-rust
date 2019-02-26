@@ -18,8 +18,7 @@ use arrayvec::ArrayVec;
 use libc::free;
 use std::cmp::min;
 use std::mem;
-use std::os::raw::c_void;
-use std::os::raw::{c_int, c_uchar, c_uint, c_ulong};
+use std::os::raw::{c_int, c_uchar, c_uint, c_ulong, c_void};
 use std::ptr;
 use std::slice;
 
