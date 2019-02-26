@@ -18,3 +18,12 @@ fn decode_test() {
     assert_eq!(mozjpeg::ColorSpace::JCS_RGB, image.color_space());
 
 }
+
+#[test]
+fn decode_failure_test() {
+    assert!(std::panic::catch_unwind(|| {
+        mozjpeg::Decompress::with_markers(mozjpeg::ALL_MARKERS)
+            .from_path("tests/test.rs")
+            .unwrap();
+    }).is_err());
+}
