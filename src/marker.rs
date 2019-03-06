@@ -3,7 +3,7 @@ extern crate mozjpeg_sys as ffi;
 
 use self::libc::c_int;
 
-/// Marker number identifier (APP0-APP14 and commment markers)
+/// Marker number identifier (APP0-APP14 and comment markers)
 ///
 /// For actual contents of markers, see `MarkerData`
 #[derive(Copy, Clone, Debug, PartialEq)]
