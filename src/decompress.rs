@@ -305,6 +305,12 @@ impl<'src> Decompress<'src> {
         return DecompressStarted::start_decompress(self);
     }
 
+    /// Start decompression with conversion to RGBA
+    pub fn rgba(mut self) -> io::Result<DecompressStarted<'src>> {
+        self.cinfo.out_color_space = ffi::J_COLOR_SPACE::JCS_EXT_RGBA;
+        return DecompressStarted::start_decompress(self);
+    }
+
     /// Start decompression with conversion to grayscale.
     pub fn grayscale(mut self) -> io::Result<DecompressStarted<'src>> {
         self.cinfo.out_color_space = ffi::J_COLOR_SPACE::JCS_GRAYSCALE;
