@@ -14,9 +14,13 @@ version = "0.8.14"
 
 [dependencies]
 libc = "0.2.49"
-mozjpeg-sys = { version = "0.10.1", default-features = false }
+mozjpeg-sys = { git = "https://github.com/gnzlbg/mozjpeg-sys", branch = "fub", default-features = false }
 rgb = "0.8.13"
 arrayvec = {version="0.4.10", features=["use_union"]}
+cpp = "0.5"
+
+[build-dependencies]
+cpp_build = "0.5"
 
 [features]
 default = ["nasm_simd", "mozjpeg-sys/unwinding"]

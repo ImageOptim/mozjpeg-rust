@@ -5,6 +5,9 @@ extern crate libc;
 extern crate arrayvec;
 extern crate mozjpeg_sys as ffi;
 
+#[macro_use]
+extern crate cpp;
+
 pub use compress::Compress;
 pub use compress::ScanMode;
 pub use decompress::{Decompress, NO_MARKERS, ALL_MARKERS};
