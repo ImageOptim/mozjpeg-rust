@@ -1,7 +1,5 @@
-extern crate libc;
-extern crate mozjpeg_sys as ffi;
-
-use self::libc::c_int;
+use mozjpeg_sys as ffi;
+use std::os::raw::c_int;
 
 /// Marker number identifier (APP0-APP14 and comment markers)
 ///
@@ -15,9 +13,9 @@ pub enum Marker {
 impl From<u8> for Marker {
     fn from(num: u8) -> Marker {
         if num == self::ffi::jpeg_marker::COM as u8 {
-            Marker::COM
+            Self::COM
         } else {
-            Marker::APP(num - self::ffi::jpeg_marker::APP0 as u8)
+            Self::APP(num - self::ffi::jpeg_marker::APP0 as u8)
         }
     }
 }
@@ -25,8 +23,8 @@ impl From<u8> for Marker {
 impl Into<c_int> for Marker {
     fn into(self) -> c_int {
         match self {
-            Marker::APP(n) => n as c_int + self::ffi::jpeg_marker::APP0 as c_int,
-            Marker::COM => self::ffi::jpeg_marker::COM as c_int,
+            Self::APP(n) => c_int::from(n) + self::ffi::jpeg_marker::APP0 as c_int,
+            Self::COM => self::ffi::jpeg_marker::COM as c_int,
         }
     }
 }

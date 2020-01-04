@@ -1,5 +1,3 @@
-extern crate mozjpeg;
-
 #[test]
 fn decode_test() {
     let d = mozjpeg::Decompress::with_markers(mozjpeg::ALL_MARKERS)
@@ -16,7 +14,6 @@ fn decode_test() {
     assert_eq!(45, image.width());
     assert_eq!(30, image.height());
     assert_eq!(mozjpeg::ColorSpace::JCS_RGB, image.color_space());
-
 }
 
 #[test]
@@ -25,5 +22,6 @@ fn decode_failure_test() {
         mozjpeg::Decompress::with_markers(mozjpeg::ALL_MARKERS)
             .from_path("tests/test.rs")
             .unwrap();
-    }).is_err());
+    })
+    .is_err());
 }

@@ -1,52 +1,50 @@
 #![allow(unused_attributes)]
 #![allow(unused_imports)]
 
-extern crate libc;
-extern crate arrayvec;
 extern crate mozjpeg_sys as ffi;
 
-pub use compress::Compress;
-pub use compress::ScanMode;
-pub use decompress::{Decompress, NO_MARKERS, ALL_MARKERS};
-pub use decompress::{Format, DctMethod};
-pub use component::CompInfo;
-pub use component::CompInfoExt;
-pub use colorspace::ColorSpace;
-pub use colorspace::ColorSpaceExt;
-pub use marker::Marker;
-pub use ffi::DCTSIZE;
-pub use ffi::JPEG_LIB_VERSION;
-use ffi::J_INT_PARAM;
-use ffi::J_BOOLEAN_PARAM;
-use ffi::JDIMENSION;
-use ffi::jpeg_compress_struct;
-use ffi::jpeg_common_struct;
-use ffi::boolean;
+pub use crate::colorspace::ColorSpace;
+pub use crate::colorspace::ColorSpaceExt;
+pub use crate::component::CompInfo;
+pub use crate::component::CompInfoExt;
+pub use crate::compress::Compress;
+pub use crate::compress::ScanMode;
+pub use crate::decompress::{DctMethod, Format};
+pub use crate::decompress::{Decompress, ALL_MARKERS, NO_MARKERS};
+use crate::ffi::boolean;
+use crate::ffi::jpeg_common_struct;
+use crate::ffi::jpeg_compress_struct;
+pub use crate::ffi::DCTSIZE;
+use crate::ffi::JDIMENSION;
+pub use crate::ffi::JPEG_LIB_VERSION;
+use crate::ffi::J_BOOLEAN_PARAM;
+use crate::ffi::J_INT_PARAM;
+pub use crate::marker::Marker;
 
-use std::os::raw::{c_void, c_int, c_ulong, c_uchar};
 use libc::free;
-use std::slice;
-use std::mem;
-use std::ptr;
 use std::cmp::min;
+use std::mem;
+use std::os::raw::{c_int, c_uchar, c_ulong, c_void};
+use std::ptr;
+use std::slice;
 
+mod colorspace;
+mod component;
+mod compress;
+pub mod decompress;
 mod errormgr;
 mod marker;
-mod vec;
 /// Quantization table presets from MozJPEG
 pub mod qtable;
-pub mod decompress;
-mod compress;
-mod component;
-mod colorspace;
+mod vec;
 
 #[test]
 fn recompress() {
+    use crate::colorspace::ColorSpace;
+    use crate::colorspace::ColorSpaceExt;
     use std::fs::File;
     use std::io::Read;
     use std::io::Write;
-    use colorspace::ColorSpace;
-    use colorspace::ColorSpaceExt;
 
     let dinfo = Decompress::new_path("tests/test.jpg").unwrap();
 
@@ -89,16 +87,16 @@ fn recompress() {
 
         cinfo.start_compress();
 
-        assert!(cinfo.write_raw_data(&bitmaps.iter().map(|c|&c[..]).collect::<Vec<_>>()));
+        assert!(cinfo.write_raw_data(&bitmaps.iter().map(|c| &c[..]).collect::<Vec<_>>()));
 
         cinfo.finish_compress();
 
         return cinfo.data_to_vec().unwrap();
     }
 
-    let data1 = &write_jpeg(&bitmaps, &samp_factors, (1.,1.));
+    let data1 = &write_jpeg(&bitmaps, &samp_factors, (1., 1.));
     let data1_len = data1.len();
-    let data2 = &write_jpeg(&bitmaps, &samp_factors, (0.5,0.5));
+    let data2 = &write_jpeg(&bitmaps, &samp_factors, (0.5, 0.5));
     let data2_len = data2.len();
 
     File::create("testout-r1.jpg").unwrap().write_all(data1).unwrap();

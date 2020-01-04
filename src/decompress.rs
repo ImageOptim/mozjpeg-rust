@@ -1,33 +1,32 @@
 //! You don't need to use this module directly.
 //!
 //! See `mozjpeg::Decompress` struct instead.
-extern crate libc;
-extern crate mozjpeg_sys as ffi;
+use mozjpeg_sys as ffi;
 
-use libc::fdopen;
-use marker::Marker;
-use errormgr::ErrorMgr;
-use errormgr::PanicingErrorMgr;
-use component::CompInfoExt;
-use component::CompInfo;
-use colorspace::ColorSpace;
-use colorspace::ColorSpaceExt;
-use vec::VecUninitExtender;
-use self::ffi::JPEG_LIB_VERSION;
-use self::ffi::J_COLOR_SPACE as COLOR_SPACE;
 use self::ffi::jpeg_decompress_struct;
 use self::ffi::DCTSIZE;
-use self::libc::{size_t, c_void, c_int, c_ulong, c_uchar};
-use std::marker::PhantomData;
-use std::slice;
-use std::mem;
-use std::ptr;
+use self::ffi::JPEG_LIB_VERSION;
+use self::ffi::J_COLOR_SPACE as COLOR_SPACE;
+use crate::colorspace::ColorSpace;
+use crate::colorspace::ColorSpaceExt;
+use crate::component::CompInfo;
+use crate::component::CompInfoExt;
+use crate::errormgr::ErrorMgr;
+use crate::errormgr::PanicingErrorMgr;
+use crate::marker::Marker;
+use crate::vec::VecUninitExtender;
+use libc::fdopen;
 use std::cmp::min;
-#[cfg(unix)]
-use std::os::unix::io::AsRawFd;
 use std::fs::File;
 use std::io;
+use std::marker::PhantomData;
+use std::mem;
+use std::os::raw::{c_int, c_uchar, c_ulong, c_void};
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 use std::path::Path;
+use std::ptr;
+use std::slice;
 
 const MAX_MCU_HEIGHT: usize = 16;
 const MAX_COMPONENTS: usize = 4;
@@ -35,14 +34,14 @@ const MAX_COMPONENTS: usize = 4;
 /// Empty list of markers
 ///
 /// By default markers are not read from JPEG files.
-pub const NO_MARKERS: &'static [Marker] = &[];
+pub const NO_MARKERS: &[Marker] = &[];
 
 /// App 0-14 and comment markers
 ///
 /// ```rust,ignore
 /// Decompress::with_markers(ALL_MARKERS)
 /// ```
-pub const ALL_MARKERS: &'static [Marker] = &[
+pub const ALL_MARKERS: &[Marker] = &[
     Marker::APP(0), Marker::APP(1), Marker::APP(2), Marker::APP(3), Marker::APP(4),
     Marker::APP(5), Marker::APP(6), Marker::APP(7), Marker::APP(8), Marker::APP(9),
     Marker::APP(10), Marker::APP(11), Marker::APP(12), Marker::APP(13), Marker::APP(14),
@@ -63,7 +62,7 @@ pub enum DctMethod {
 /// Use `Decompress` static methods instead of creating this directly
 pub struct DecompressConfig<'markers> {
     save_markers: &'markers [Marker],
-    err: Option<ErrorMgr>
+    err: Option<ErrorMgr>,
 }
 
 impl<'markers> DecompressConfig<'markers> {
@@ -77,7 +76,7 @@ impl<'markers> DecompressConfig<'markers> {
 
     #[inline]
     fn create<'a>(self) -> Decompress<'a> {
-        let mut d = Decompress::new_err(self.err.unwrap_or_else(|| <ErrorMgr as PanicingErrorMgr>::new()));
+        let mut d = Decompress::new_err(self.err.unwrap_or_else(<ErrorMgr as PanicingErrorMgr>::new));
         for &marker in self.save_markers {
             d.save_marker(marker);
         }
@@ -154,7 +153,7 @@ impl<'a> Iterator for MarkerIter<'a> {
             return None;
         }
         unsafe {
-            let ref last = *self.marker_list;
+            let last = &*self.marker_list;
             self.marker_list = last.next;
             Some(MarkerData {
                 marker: last.marker.into(),
@@ -171,7 +170,7 @@ impl<'src> Decompress<'src> {
     }
 
     #[inline]
-    pub fn with_markers(save_markers: &[Marker]) -> DecompressConfig {
+    pub fn with_markers(save_markers: &[Marker]) -> DecompressConfig<'_> {
         Self::config().with_markers(save_markers)
     }
 
@@ -209,7 +208,7 @@ impl<'src> Decompress<'src> {
             };
             newself.cinfo.common.err = &mut *newself.own_error;
 
-            let s = mem::size_of_val(&newself.cinfo) as size_t;
+            let s = mem::size_of_val(&newself.cinfo) as usize;
             ffi::jpeg_CreateDecompress(&mut newself.cinfo, JPEG_LIB_VERSION, s);
 
             newself
@@ -217,9 +216,7 @@ impl<'src> Decompress<'src> {
     }
 
     pub fn components(&self) -> &[CompInfo] {
-        unsafe {
-            slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize)
-        }
+        unsafe { slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize) }
     }
 
     pub fn components_mut(&mut self) -> &mut [CompInfo] {
@@ -251,9 +248,9 @@ impl<'src> Decompress<'src> {
     fn read_header(&mut self) -> io::Result<()> {
         let res = unsafe { ffi::jpeg_read_header(&mut self.cinfo, 0) };
         if res == 1 {
-            return Ok(());
+            Ok(())
         } else {
-            return Err(io::Error::new(io::ErrorKind::Other, format!("JPEG err {}", res)));
+            Err(io::Error::new(io::ErrorKind::Other, format!("JPEG err {}", res)))
         }
     }
 
@@ -266,7 +263,7 @@ impl<'src> Decompress<'src> {
     }
 
     /// Markers are available only if you enable them via `with_markers()`
-    pub fn markers(&self) -> MarkerIter {
+    pub fn markers(&self) -> MarkerIter<'_> {
         MarkerIter {
             marker_list: self.cinfo.marker_list,
             _uhh: PhantomData,
@@ -275,7 +272,7 @@ impl<'src> Decompress<'src> {
 
     fn save_marker(&mut self, marker: Marker) {
         unsafe {
-            ffi::jpeg_save_markers (&mut self.cinfo, marker.into(), 0xFFFF);
+            ffi::jpeg_save_markers(&mut self.cinfo, marker.into(), 0xFFFF);
         }
     }
 
@@ -302,19 +299,19 @@ impl<'src> Decompress<'src> {
     /// Start decompression with conversion to RGB
     pub fn rgb(mut self) -> io::Result<DecompressStarted<'src>> {
         self.cinfo.out_color_space = ffi::J_COLOR_SPACE::JCS_RGB;
-        return DecompressStarted::start_decompress(self);
+        DecompressStarted::start_decompress(self)
     }
 
     /// Start decompression with conversion to RGBA
     pub fn rgba(mut self) -> io::Result<DecompressStarted<'src>> {
         self.cinfo.out_color_space = ffi::J_COLOR_SPACE::JCS_EXT_RGBA;
-        return DecompressStarted::start_decompress(self);
+        DecompressStarted::start_decompress(self)
     }
 
     /// Start decompression with conversion to grayscale.
     pub fn grayscale(mut self) -> io::Result<DecompressStarted<'src>> {
         self.cinfo.out_color_space = ffi::J_COLOR_SPACE::JCS_GRAYSCALE;
-        return DecompressStarted::start_decompress(self);
+        DecompressStarted::start_decompress(self)
     }
 
     /// Selects the algorithm used for the DCT step.
@@ -345,7 +342,7 @@ impl<'src> Decompress<'src> {
 
     pub fn raw(mut self) -> io::Result<DecompressStarted<'src>> {
         self.set_raw_data_out(true);
-        return DecompressStarted::start_decompress(self);
+        DecompressStarted::start_decompress(self)
     }
 
     fn out_color_space(&self) -> ColorSpace {
@@ -354,7 +351,7 @@ impl<'src> Decompress<'src> {
 
     /// Start decompression without colorspace conversion
     pub fn image(self) -> io::Result<Format<'src>> {
-        use ffi::J_COLOR_SPACE::*;
+        use crate::ffi::J_COLOR_SPACE::*;
         match self.out_color_space() {
             JCS_RGB => Ok(Format::RGB(DecompressStarted::start_decompress(self)?)),
             JCS_CMYK => Ok(Format::CMYK(DecompressStarted::start_decompress(self)?)),
@@ -364,7 +361,7 @@ impl<'src> Decompress<'src> {
     }
 
     /// Rescales the output image by `numerator / 8` during decompression.
-    /// `numerator` must be between 1 and 16. 
+    /// `numerator` must be between 1 and 16.
     /// Thus setting a value of `8` will result in an unscaled image.
     pub fn scale(&mut self, numerator: u8) {
         assert!(1 <= numerator && numerator <= 16, "numerator must be between 1 and 16");
@@ -462,13 +459,13 @@ impl<'src> DecompressStarted<'src> {
         assert_eq!(num_components, mem::size_of::<T>());
         let width = self.width();
         let height = self.height();
-        let mut image_dst:Vec<T> = Vec::with_capacity(self.height() * width);
+        let mut image_dst: Vec<T> = Vec::with_capacity(self.height() * width);
         unsafe {
             image_dst.extend_uninit(height * width);
 
             while self.read_more_chunks() {
                 let start_line = self.dec.cinfo.output_scanline as usize;
-                let rest:&mut [T] = &mut image_dst[width * start_line ..];
+                let rest: &mut [T] = &mut image_dst[width * start_line..];
                 let rows = (&mut rest.as_mut_ptr()) as *mut *mut T;
 
                 let rows_read = ffi::jpeg_read_scanlines(&mut self.dec.cinfo, rows as *mut *mut u8, 1) as usize;
@@ -478,7 +475,7 @@ impl<'src> DecompressStarted<'src> {
                 }
             }
         }
-        return Some(image_dst);
+        Some(image_dst)
     }
 
     pub fn components(&self) -> &[CompInfo] {
@@ -490,12 +487,9 @@ impl<'src> DecompressStarted<'src> {
     }
 
     pub fn finish_decompress(mut self) -> bool {
-        unsafe {
-            0 != ffi::jpeg_finish_decompress(&mut self.dec.cinfo)
-        }
+        unsafe { 0 != ffi::jpeg_finish_decompress(&mut self.dec.cinfo) }
     }
 }
-
 
 impl<'src> Drop for Decompress<'src> {
     fn drop(&mut self) {
@@ -507,17 +501,16 @@ impl<'src> Drop for Decompress<'src> {
 
 #[test]
 fn read_file() {
+    use crate::colorspace::ColorSpace;
+    use crate::colorspace::ColorSpaceExt;
     use std::fs::File;
     use std::io::Read;
-    use colorspace::ColorSpace;
-    use colorspace::ColorSpaceExt;
 
     let mut data = Vec::new();
     File::open("tests/test.jpg").unwrap().read_to_end(&mut data).unwrap();
     assert_eq!(2169, data.len());
 
     let dinfo = Decompress::new_mem(&data[..]).unwrap();
-
 
     assert_eq!(1.0, dinfo.gamma());
     assert_eq!(ColorSpace::JCS_YCbCr, dinfo.color_space());
@@ -551,7 +544,7 @@ fn read_file() {
     while dinfo.read_more_chunks() {
         has_chunks = true;
         dinfo.read_raw_data_chunk(&mut bitmaps);
-        assert_eq!(bitmaps[0].len(), 4*bitmaps[1].len());
+        assert_eq!(bitmaps[0].len(), 4 * bitmaps[1].len());
     }
     assert!(has_chunks);
 
@@ -565,10 +558,10 @@ fn read_file() {
 #[test]
 #[cfg(unix)]
 fn no_markers() {
+    use crate::colorspace::ColorSpace;
+    use crate::colorspace::ColorSpaceExt;
     use std::fs::File;
     use std::io::Read;
-    use colorspace::ColorSpace;
-    use colorspace::ColorSpaceExt;
 
     let dinfo = Decompress::new_path("tests/test.jpg").unwrap();
     assert_eq!(0, dinfo.markers().count());
@@ -579,10 +572,10 @@ fn no_markers() {
 
 #[test]
 fn read_file_rgb() {
+    use crate::colorspace::ColorSpace;
+    use crate::colorspace::ColorSpaceExt;
     use std::fs::File;
     use std::io::Read;
-    use colorspace::ColorSpace;
-    use colorspace::ColorSpaceExt;
 
     let mut data = Vec::new();
     File::open("tests/test.jpg").unwrap().read_to_end(&mut data).unwrap();
@@ -596,10 +589,10 @@ fn read_file_rgb() {
     assert_eq!(ColorSpace::JCS_RGB, dinfo.color_space());
     assert_eq!(dinfo.components().len(), dinfo.color_space().num_components() as usize);
 
-    let bitmap:Vec<(u8,u8,u8)> = dinfo.read_scanlines().unwrap();
-    assert_eq!(bitmap.len(), 45*30);
+    let bitmap: Vec<(u8, u8, u8)> = dinfo.read_scanlines().unwrap();
+    assert_eq!(bitmap.len(), 45 * 30);
 
-    assert!(!bitmap.contains(&(0,0,0)));
+    assert!(!bitmap.contains(&(0, 0, 0)));
 
     assert!(dinfo.finish_decompress());
 }

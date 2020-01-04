@@ -1,11 +1,9 @@
 #![allow(non_upper_case_globals)]
 
-extern crate libc;
-use ::std;
-use libc::c_uint;
+use std::cmp::{max, min};
 use std::fmt;
-use std::cmp::{min,max};
-type Coef = libc::c_uint;
+use std::os::raw::c_uint;
+type Coef = c_uint;
 
 pub struct QTable {
     pub(crate) coeffs: [Coef; 64],
@@ -19,7 +17,7 @@ impl PartialEq for QTable {
 }
 
 impl fmt::Debug for QTable {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(),fmt::Error> {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         write!(fmt, "QTable{{coeffs:{:?}}}", &self.coeffs[..])
     }
 }
@@ -31,7 +29,7 @@ const low_weights : [f32; 19] = [
 ];
 
 impl QTable {
-    pub fn compare(&self, other: &QTable) -> (f32, f32) {
+    pub fn compare(&self, other: &Self) -> (f32, f32) {
         let mut scales = [0.; 64];
         for (s, (&a, &b)) in scales.iter_mut().zip(self.coeffs.iter().zip(other.coeffs.iter())) {
             *s = if b > 0 {a as f32 / b as f32} else {0.};
@@ -41,7 +39,8 @@ impl QTable {
         (avg, var)
     }
 
-    pub fn scaled(&self, dc_quality: f32, ac_quality: f32) -> QTable {
+    #[must_use]
+    pub fn scaled(&self, dc_quality: f32, ac_quality: f32) -> Self {
         let dc_scaling = Self::quality_scaling(dc_quality);
         let ac_scaling = Self::quality_scaling(ac_quality);
 
@@ -61,12 +60,10 @@ impl QTable {
                 *out = min(255, max(1, (*coef as f32 * ac_scaling).round() as Coef));
             }
         }
-        QTable{
-            coeffs:out,
-        }
+        Self { coeffs: out }
     }
 
-    pub unsafe fn as_ptr(&self) -> *const c_uint {
+    pub fn as_ptr(&self) -> *const c_uint {
         self.coeffs.as_ptr()
     }
 
@@ -78,7 +75,7 @@ impl QTable {
             50. / quality
         } else {
             (100. - quality) / 50.
-        }
+        };
     }
 }
 
@@ -208,7 +205,7 @@ pub static AhumadaWatsonPeterson: QTable = QTable{coeffs:[
     32, 24, 27, 33, 42, 53, 65, 77
   ]};
 
-pub static PetersonAhumadaWatson: QTable = QTable{coeffs:[
+pub static PetersonAhumadaWatson: QTable = QTable { coeffs:[
     /* An improved detection model for DCT coefficient quantization (1993) Peterson, Ahumada and Watson
      */
     14, 10, 11, 14, 19, 25, 34, 45,
@@ -221,7 +218,7 @@ pub static PetersonAhumadaWatson: QTable = QTable{coeffs:[
     45, 33, 38, 47, 59, 74, 91, 108
 ]};
 
-pub static ALL_TABLES: [(&'static str, &'static QTable); 12] = [
+pub static ALL_TABLES: [(&str, &QTable); 12] = [
     ("Annex-K Luma", &AnnexK_Luma),
     ("Annex-K Chroma", &AnnexK_Chroma),
     ("Flat", &Flat),
@@ -238,8 +235,8 @@ pub static ALL_TABLES: [(&'static str, &'static QTable); 12] = [
 
 #[test]
 fn scaling() {
-    assert_eq!(QTable{coeffs:[100; 64]}, QTable{coeffs:[100; 64]});
-    assert!(QTable{coeffs:[1; 64]} != QTable{coeffs:[2; 64]});
+    assert_eq!(QTable { coeffs: [100; 64] }, QTable { coeffs: [100; 64] });
+    assert!(QTable { coeffs: [1; 64] } != QTable { coeffs: [2; 64] });
 
     assert_eq!(QTable{coeffs:[36; 64]}, Flat.scaled(22.,22.));
     assert_eq!(QTable{coeffs:[8; 64]}, Flat.scaled(75.,75.));
@@ -256,6 +253,6 @@ fn scaling() {
         32, 32, 32, 32, 32, 32, 32, 32]}, Flat.scaled(95.,25.));
     assert_eq!(PetersonAhumadaWatson, PetersonAhumadaWatson.scaled(50.,50.));
 
-    assert_eq!(QTable{coeffs:[1; 64]}, NRobidoux.scaled(99.9,99.9));
-    assert_eq!(QTable{coeffs:[1; 64]}, MSSSIM_Chroma.scaled(99.8,99.8));
+    assert_eq!(QTable { coeffs: [1; 64] }, NRobidoux.scaled(99.9, 99.9));
+    assert_eq!(QTable { coeffs: [1; 64] }, MSSSIM_Chroma.scaled(99.8, 99.8));
 }

@@ -1,4 +1,4 @@
-pub use ffi::J_COLOR_SPACE as ColorSpace;
+pub use crate::ffi::J_COLOR_SPACE as ColorSpace;
 
 pub trait ColorSpaceExt {
     /// Number of channels (including unused alpha) in this color space
@@ -31,7 +31,7 @@ impl ColorSpaceExt for ColorSpace {
 
 #[test]
 fn test() {
-    use ffi;
+    use crate::ffi;
     assert_eq!(3, ffi::J_COLOR_SPACE::JCS_YCbCr.num_components());
     assert_eq!(3, ffi::J_COLOR_SPACE::JCS_RGB.num_components());
     assert_eq!(1, ffi::J_COLOR_SPACE::JCS_GRAYSCALE.num_components());

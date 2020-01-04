@@ -1,8 +1,8 @@
 extern crate mozjpeg_sys as ffi;
-use qtable::QTable;
+use crate::qtable::QTable;
 
-pub use ffi::jpeg_component_info as CompInfo;
 use self::ffi::DCTSIZE;
+pub use crate::ffi::jpeg_component_info as CompInfo;
 
 pub trait CompInfoExt {
     /// Number of pixels per row, including padding to MCU

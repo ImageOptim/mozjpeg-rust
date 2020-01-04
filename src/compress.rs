@@ -1,29 +1,27 @@
-#![allow(deprecated)]
-
-use errormgr::ErrorMgr;
-use errormgr::PanicingErrorMgr;
-use component::CompInfoExt;
-use component::CompInfo;
-use marker::Marker;
-use colorspace::ColorSpace;
-use colorspace::ColorSpaceExt;
-use qtable::QTable;
-use ffi;
-use ffi::JPEG_LIB_VERSION;
-use ffi::J_INT_PARAM;
-use ffi::J_BOOLEAN_PARAM;
-use ffi::jpeg_compress_struct;
-use ffi::boolean;
-use ffi::DCTSIZE;
-use ffi::JDIMENSION;
-use std::os::raw::{c_int, c_uint, c_ulong, c_uchar};
-use libc::free;
-use libc::c_void;
+use crate::colorspace::ColorSpace;
+use crate::colorspace::ColorSpaceExt;
+use crate::component::CompInfo;
+use crate::component::CompInfoExt;
+use crate::errormgr::ErrorMgr;
+use crate::errormgr::PanicingErrorMgr;
+use crate::ffi;
+use crate::ffi::boolean;
+use crate::ffi::jpeg_compress_struct;
+use crate::ffi::DCTSIZE;
+use crate::ffi::JDIMENSION;
+use crate::ffi::JPEG_LIB_VERSION;
+use crate::ffi::J_BOOLEAN_PARAM;
+use crate::ffi::J_INT_PARAM;
+use crate::marker::Marker;
+use crate::qtable::QTable;
 use arrayvec::ArrayVec;
-use std::slice;
-use std::mem;
-use std::ptr;
+use libc::free;
 use std::cmp::min;
+use std::mem;
+use std::os::raw::c_void;
+use std::os::raw::{c_int, c_uchar, c_uint, c_ulong};
+use std::ptr;
+use std::slice;
 
 const MAX_MCU_HEIGHT: usize = 16;
 const MAX_COMPONENTS: usize = 4;
@@ -38,7 +36,7 @@ pub struct Compress {
     outsize: c_ulong,
 }
 
-#[derive(Copy,Clone)]
+#[derive(Copy, Clone)]
 pub enum ScanMode {
     AllComponentsTogether = 0,
     ScanPerComponent = 1,
@@ -56,7 +54,7 @@ impl Compress {
 
     pub fn new_err(err: ErrorMgr, color_space: ColorSpace) -> Compress {
         unsafe {
-            let mut newself = Compress{
+            let mut newself = Compress {
                 cinfo: mem::zeroed(),
                 own_err: Box::new(err),
                 outbuffer: ::std::ptr::null_mut(),
@@ -84,8 +82,12 @@ impl Compress {
 
     pub fn write_marker(&mut self, marker: Marker, data: &[u8]) {
         unsafe {
-            ffi::jpeg_write_marker(&mut self.cinfo, marker.into(), data.as_ptr(), data.len() as c_uint);
-
+            ffi::jpeg_write_marker(
+                &mut self.cinfo,
+                marker.into(),
+                data.as_ptr(),
+                data.len() as c_uint,
+            );
         }
     }
 
@@ -97,9 +99,7 @@ impl Compress {
     }
 
     pub fn components(&self) -> &[CompInfo] {
-        unsafe {
-            slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize)
-        }
+        unsafe { slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize) }
     }
 
     fn can_write_more_lines(&self) -> bool {
@@ -121,13 +121,17 @@ impl Compress {
             }
 
             unsafe {
-                let rows_written = ffi::jpeg_write_scanlines(&mut self.cinfo, row_pointers.as_ptr(), row_pointers.len() as u32) as usize;
+                let rows_written = ffi::jpeg_write_scanlines(
+                    &mut self.cinfo,
+                    row_pointers.as_ptr(),
+                    row_pointers.len() as u32,
+                ) as usize;
                 if rows_written < row_pointers.len() {
                     return false;
                 }
             }
         }
-        return true;
+        true
     }
 
     pub fn write_raw_data(&mut self, image_src: &[&[u8]]) -> bool {
@@ -159,13 +163,16 @@ impl Compress {
                 let mut comp_ptrs = [ptr::null::<*const u8>(); MAX_COMPONENTS];
 
                 for (ci, comp_info) in self.components().iter().enumerate() {
-
                     let row_stride = comp_info.row_stride();
 
                     let input_height = image_src[ci].len() / row_stride;
 
-                    let comp_start_row = start_row * comp_info.v_samp_factor as usize / self.cinfo.max_v_samp_factor as usize;
-                    let comp_height = min(input_height - comp_start_row, DCTSIZE * comp_info.v_samp_factor as usize);
+                    let comp_start_row = start_row * comp_info.v_samp_factor as usize
+                        / self.cinfo.max_v_samp_factor as usize;
+                    let comp_height = min(
+                        input_height - comp_start_row,
+                        DCTSIZE * comp_info.v_samp_factor as usize,
+                    );
                     assert!(comp_height >= 8);
 
                     for ri in 0..comp_height {
@@ -185,7 +192,7 @@ impl Compress {
                 start_row += rows_written;
             }
         }
-        return true;
+        true
     }
 
     pub fn set_color_space(&mut self, color_space: ColorSpace) {
@@ -291,7 +298,7 @@ impl Compress {
         }
     }
 
-    pub fn data_as_mut_slice(&mut self) -> Result<&[u8],()> {
+    pub fn data_as_mut_slice(&mut self) -> Result<&[u8], ()> {
         if self.outbuffer.is_null() || 0 == self.outsize {
             return Err(());
         }
@@ -300,14 +307,14 @@ impl Compress {
         }
     }
 
-    pub fn data_to_vec(&mut self) -> Result<Vec<u8>,()> {
+    pub fn data_to_vec(&mut self) -> Result<Vec<u8>, ()> {
         if self.outbuffer.is_null() || 0 == self.outsize {
             return Err(());
         }
         unsafe {
             let res = Ok(slice::from_raw_parts(self.outbuffer, self.outsize as usize).to_vec());
             self.free_mem_dest();
-            return res;
+            res
         }
     }
 }
@@ -340,7 +347,7 @@ fn write_mem() {
 
     cinfo.set_mem_dest();
 
-    for (c, samp) in cinfo.components_mut().iter_mut().zip(vec![2,1,1]) {
+    for (c, samp) in cinfo.components_mut().iter_mut().zip(vec![2, 1, 1]) {
         c.v_samp_factor = samp;
         c.h_samp_factor = samp;
     }
@@ -356,11 +363,13 @@ fn write_mem() {
     assert_eq!(16, cinfo.components()[2].row_stride());
     assert_eq!(24, cinfo.components()[2].col_stride());
 
-    let bitmaps = cinfo.components().iter().map(|c|{
-        vec![128u8; c.row_stride() * c.col_stride()]
-    }).collect::<Vec<_>>();
+    let bitmaps = cinfo
+        .components()
+        .iter()
+        .map(|c| vec![128u8; c.row_stride() * c.col_stride()])
+        .collect::<Vec<_>>();
 
-    assert!(cinfo.write_raw_data(&bitmaps.iter().map(|c|&c[..]).collect::<Vec<_>>()));
+    assert!(cinfo.write_raw_data(&bitmaps.iter().map(|c| &c[..]).collect::<Vec<_>>()));
 
     cinfo.finish_compress();
 

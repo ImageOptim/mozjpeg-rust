@@ -1,13 +1,13 @@
 #![feature(core)]
 extern crate mozjpeg_sys as ffi;
 
-pub use self::ffi::jpeg_error_mgr as ErrorMgr;
 use self::ffi::jpeg_common_struct;
+pub use self::ffi::jpeg_error_mgr as ErrorMgr;
 use ::std::mem;
 
 pub trait PanicingErrorMgr {
     fn new() -> ErrorMgr {
-        unsafe{
+        unsafe {
             let mut err = mem::zeroed();
             ffi::jpeg_std_error(&mut err);
             err.error_exit = Some(<ErrorMgr as PanicingErrorMgr>::panic_error_exit);

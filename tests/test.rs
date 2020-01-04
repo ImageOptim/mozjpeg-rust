@@ -1,4 +1,3 @@
-extern crate mozjpeg;
 use mozjpeg::CompInfoExt;
 
 pub fn decompress_jpeg(jpeg: &[u8]) -> Vec<Vec<u8>> {
@@ -10,7 +9,7 @@ pub fn decompress_jpeg(jpeg: &[u8]) -> Vec<Vec<u8>> {
 
     let mut decomp = decomp.raw().unwrap();
     {
-        let mut bitmap_refs:Vec<_> = bitmaps.iter_mut().collect();
+        let mut bitmap_refs: Vec<_> = bitmaps.iter_mut().collect();
         decomp.read_raw_data(&mut bitmap_refs);
         decomp.finish_decompress();
     }
@@ -28,7 +27,7 @@ fn color_jpeg() {
         comp.set_mem_dest();
         comp.start_compress();
 
-        let lines = vec![128; size*size*3];
+        let lines = vec![128; size * size * 3];
         assert!(comp.write_scanlines(&lines[..]));
 
         comp.finish_compress();
@@ -51,8 +50,8 @@ fn raw_jpeg() {
         comp.set_mem_dest();
         comp.start_compress();
 
-        let rounded_size = (size+7)/8*8;
-        let t = vec![128; rounded_size*rounded_size];
+        let rounded_size = (size + 7) / 8 * 8;
+        let t = vec![128; rounded_size * rounded_size];
         let components = vec![&t[..], &t[..], &t[..]];
         comp.write_raw_data(&components[..]);
 
