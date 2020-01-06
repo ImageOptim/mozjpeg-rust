@@ -27,3 +27,6 @@ with_simd = ["mozjpeg-sys/with_simd"]
 
 [dev-dependencies]
 bytemuck = "1.5.1"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

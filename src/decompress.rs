@@ -1,6 +1,4 @@
-//! You don't need to use this module directly.
-//!
-//! See `mozjpeg::Decompress` struct instead.
+//! See the `Decompress` struct instead. You don't need to use this module directly.
 use crate::ffi;
 use crate::ffi::jpeg_decompress_struct;
 use crate::ffi::DCTSIZE;
@@ -38,8 +36,9 @@ pub const NO_MARKERS: &[Marker] = &[];
 
 /// App 0-14 and comment markers
 ///
-/// ```rust,ignore
-/// Decompress::with_markers(ALL_MARKERS)
+/// ```rust
+/// # use mozjpeg::*;
+/// Decompress::with_markers(ALL_MARKERS);
 /// ```
 pub const ALL_MARKERS: &[Marker] = &[
     Marker::APP(0), Marker::APP(1), Marker::APP(2), Marker::APP(3), Marker::APP(4),
@@ -123,8 +122,11 @@ impl<'markers> DecompressConfig<'markers> {
 ///
 /// High-level wrapper for `jpeg_decompress_struct`
 ///
-/// ```rust,ignore
-/// let d = Decompress::new_path("image.jpg");
+/// ```rust
+/// # use mozjpeg::*;
+/// # fn t() -> std::io::Result<()> {
+/// let d = Decompress::new_path("image.jpg")?;
+/// # Ok(()) }
 /// ```
 pub struct Decompress<'src> {
     cinfo: jpeg_decompress_struct,
@@ -238,9 +240,9 @@ impl<'src> Decompress<'src> {
         Ok(())
     }
 
-    fn set_mem_src(&mut self, file: &'src [u8]) {
+    fn set_mem_src(&mut self, file_bytes: &'src [u8]) {
         unsafe {
-            ffi::jpeg_mem_src(&mut self.cinfo, file.as_ptr(), file.len() as c_ulong);
+            ffi::jpeg_mem_src(&mut self.cinfo, file_bytes.as_ptr(), file_bytes.len() as c_ulong);
         }
     }
 
@@ -297,6 +299,7 @@ impl<'src> Decompress<'src> {
     }
 
     /// Start decompression with conversion to RGB
+    #[inline(always)]
     pub fn rgb(mut self) -> io::Result<DecompressStarted<'src>> {
         self.cinfo.out_color_space = ffi::J_COLOR_SPACE::JCS_RGB;
         DecompressStarted::start_decompress(self)
@@ -309,12 +312,14 @@ impl<'src> Decompress<'src> {
     }
 
     /// Start decompression with conversion to RGBA
+    #[inline(always)]
     pub fn rgba(mut self) -> io::Result<DecompressStarted<'src>> {
         self.cinfo.out_color_space = ffi::J_COLOR_SPACE::JCS_EXT_RGBA;
         DecompressStarted::start_decompress(self)
     }
 
     /// Start decompression with conversion to grayscale.
+    #[inline(always)]
     pub fn grayscale(mut self) -> io::Result<DecompressStarted<'src>> {
         self.cinfo.out_color_space = ffi::J_COLOR_SPACE::JCS_GRAYSCALE;
         DecompressStarted::start_decompress(self)
@@ -346,6 +351,7 @@ impl<'src> Decompress<'src> {
         self.cinfo.do_block_smoothing = value as ffi::boolean;
     }
 
+    #[inline(always)]
     pub fn raw(mut self) -> io::Result<DecompressStarted<'src>> {
         self.set_raw_data_out(true);
         DecompressStarted::start_decompress(self)
