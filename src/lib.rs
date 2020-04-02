@@ -69,7 +69,9 @@ fn recompress() {
 
         cinfo.set_size(45, 30);
 
-        cinfo.set_gamma(1.0);
+        #[allow(deprecated)] {
+            cinfo.set_gamma(1.0);
+        }
 
         cinfo.set_raw_data_in(true);
 

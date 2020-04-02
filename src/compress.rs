@@ -51,6 +51,9 @@ impl Compress {
         Compress::new_err(<ErrorMgr as PanicingErrorMgr>::new(), color_space)
     }
 
+    /// Use a specific error handler instead of the default panicking one
+    ///
+    /// `color_space` refers to input color space
     pub fn new_err(err: ErrorMgr, color_space: ColorSpace) -> Compress {
         unsafe {
             let mut newself = Compress {
@@ -73,12 +76,16 @@ impl Compress {
         }
     }
 
+    /// Settings can't be changed after this call
     pub fn start_compress(&mut self) {
         unsafe {
             ffi::jpeg_start_compress(&mut self.cinfo, true as boolean);
         }
     }
 
+    /// Add a marker to compressed file
+    ///
+    /// Data is max 64KB
     pub fn write_marker(&mut self, marker: Marker, data: &[u8]) {
         unsafe {
             ffi::jpeg_write_marker(
@@ -90,13 +97,14 @@ impl Compress {
         }
     }
 
-    /// Expose components for modification
+    /// Expose components for modification, e.g. to set chroma subsampling
     pub fn components_mut(&mut self) -> &mut [CompInfo] {
         unsafe {
             slice::from_raw_parts_mut(self.cinfo.comp_info, self.cinfo.num_components as usize)
         }
     }
 
+    /// Read-only view of component information
     pub fn components(&self) -> &[CompInfo] {
         unsafe { slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize) }
     }
@@ -133,6 +141,10 @@ impl Compress {
         true
     }
 
+    /// Advanced. Only possible after `set_raw_data_in()`.
+    /// Write YCbCr blocks pixels instead of usual color space
+    ///
+    /// See `raw_data_in` in libjpeg docs
     pub fn write_raw_data(&mut self, image_src: &[&[u8]]) -> bool {
         if 0 == self.cinfo.raw_data_in {
             panic!("Raw data not set");
@@ -194,21 +206,28 @@ impl Compress {
         true
     }
 
+    /// Set color space of JPEG being written, different from input color space
+    ///
+    /// See `jpeg_set_colorspace` in libjpeg docs
     pub fn set_color_space(&mut self, color_space: ColorSpace) {
         unsafe {
             ffi::jpeg_set_colorspace(&mut self.cinfo, color_space);
         }
     }
 
+    /// Image size of the input
     pub fn set_size(&mut self, width: usize, height: usize) {
         self.cinfo.image_width = width as JDIMENSION;
         self.cinfo.image_height = height as JDIMENSION;
     }
 
+    /// libjpeg's `input_gamma` = image gamma of input image
+    #[deprecated(note = "it doesn't do anything")]
     pub fn set_gamma(&mut self, gamma: f64) {
         self.cinfo.input_gamma = gamma;
     }
 
+    /// If true, it will use MozJPEG's scan optimization. Makes progressive image files smaller.
     pub fn set_optimize_scans(&mut self, opt: bool) {
         unsafe {
             ffi::jpeg_c_set_bool_param(&mut self.cinfo, J_BOOLEAN_PARAM::JBOOLEAN_OPTIMIZE_SCANS, opt as boolean);
@@ -223,6 +242,8 @@ impl Compress {
         self.cinfo.optimize_coding = opt as boolean;
     }
 
+    /// Specifies whether multiple scans should be considered during trellis
+    /// quantization.
     pub fn set_use_scans_in_trellis(&mut self, opt: bool) {
         unsafe {
             ffi::jpeg_c_set_bool_param(&mut self.cinfo, J_BOOLEAN_PARAM::JBOOLEAN_USE_SCANS_IN_TRELLIS, opt as boolean);
@@ -236,6 +257,7 @@ impl Compress {
         }
     }
 
+    /// One scan for all components looks best. Other options may flash grayscale or green images.
     pub fn set_scan_optimization_mode(&mut self, mode: ScanMode) {
         unsafe {
             ffi::jpeg_c_set_int_param(&mut self.cinfo, J_INT_PARAM::JINT_DC_SCAN_OPT_MODE, mode as c_int);
@@ -244,6 +266,8 @@ impl Compress {
     }
 
     /// Reset to libjpeg v6 settings
+    ///
+    /// It gives files identical with libjpeg-turbo
     pub fn set_fastest_defaults(&mut self) {
         unsafe {
             ffi::jpeg_c_set_int_param(&mut self.cinfo, J_INT_PARAM::JINT_COMPRESS_PROFILE, ffi::JINT_COMPRESS_PROFILE_VALUE::JCP_FASTEST as c_int);
@@ -251,28 +275,33 @@ impl Compress {
         }
     }
 
+    /// Advanced. See `raw_data_in` in libjpeg docs.
     pub fn set_raw_data_in(&mut self, opt: bool) {
         self.cinfo.raw_data_in = opt as boolean;
     }
 
+    /// Set image quality. Values 60-80 are recommended.
     pub fn set_quality(&mut self, quality: f32) {
         unsafe {
             ffi::jpeg_set_quality(&mut self.cinfo, quality as c_int, false as boolean);
         }
     }
 
+    /// Instead of quality setting, use a specific quantization table.
     pub fn set_luma_qtable(&mut self, qtable: &QTable) {
         unsafe {
             ffi::jpeg_add_quant_table(&mut self.cinfo, 0, qtable.as_ptr(), 100, 1);
         }
     }
 
+    /// Instead of quality setting, use a specific quantization table for color.
     pub fn set_chroma_qtable(&mut self, qtable: &QTable) {
         unsafe {
             ffi::jpeg_add_quant_table(&mut self.cinfo, 1, qtable.as_ptr(), 100, 1);
         }
     }
 
+    /// Write to in-memory buffer
     pub fn set_mem_dest(&mut self) {
         self.free_mem_dest();
         unsafe {
@@ -280,6 +309,7 @@ impl Compress {
         }
     }
 
+    /// Destroy in-memory buffer
     fn free_mem_dest(&mut self) {
         if !self.outbuffer.is_null() {
             unsafe {
@@ -290,12 +320,15 @@ impl Compress {
         }
     }
 
+    /// Finalize compression.
+    /// In case of progressive files, this may actually start processing.
     pub fn finish_compress(&mut self) {
         unsafe {
             ffi::jpeg_finish_compress(&mut self.cinfo);
         }
     }
 
+    /// If `set_mem_dest()` was enabled, this is the result
     pub fn data_as_mut_slice(&mut self) -> Result<&[u8], ()> {
         if self.outbuffer.is_null() || 0 == self.outsize {
             return Err(());
@@ -305,6 +338,7 @@ impl Compress {
         }
     }
 
+    /// If `set_mem_dest()` was enabled, this is the result. Can be called once only.
     pub fn data_to_vec(&mut self) -> Result<Vec<u8>, ()> {
         if self.outbuffer.is_null() || 0 == self.outsize {
             return Err(());
@@ -334,7 +368,9 @@ fn write_mem() {
 
     cinfo.set_size(17, 33);
 
-    cinfo.set_gamma(1.0);
+    #[allow(deprecated)] {
+        cinfo.set_gamma(1.0);
+    }
 
     cinfo.set_progressive_mode();
     cinfo.set_scan_optimization_mode(ScanMode::AllComponentsTogether);
