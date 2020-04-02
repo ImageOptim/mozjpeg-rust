@@ -127,14 +127,21 @@ impl Compress {
                 row_pointers.push(row.as_ptr());
             }
 
-            unsafe {
-                let rows_written = ffi::jpeg_write_scanlines(
-                    &mut self.cinfo,
-                    row_pointers.as_ptr(),
-                    row_pointers.len() as u32,
-                ) as usize;
-                if rows_written < row_pointers.len() {
-                    return false;
+            let mut rows_left = row_pointers.len() as u32;
+            let mut row_pointers = row_pointers.as_ptr();
+            while rows_left > 0 {
+                unsafe {
+                    let rows_written = ffi::jpeg_write_scanlines(
+                        &mut self.cinfo,
+                        row_pointers,
+                        rows_left,
+                    );
+                    debug_assert!(rows_left >= rows_written);
+                    if rows_written == 0 {
+                        return false;
+                    }
+                    rows_left -= rows_written;
+                    row_pointers = row_pointers.add(rows_written as usize);
                 }
             }
         }
@@ -404,6 +411,26 @@ fn write_mem() {
         .collect::<Vec<_>>();
 
     assert!(cinfo.write_raw_data(&bitmaps.iter().map(|c| &c[..]).collect::<Vec<_>>()));
+
+    cinfo.finish_compress();
+
+    cinfo.data_to_vec().unwrap();
+}
+
+#[test]
+fn convert_colorspace() {
+    let mut cinfo = Compress::new(ColorSpace::JCS_RGB);
+    cinfo.set_color_space(ColorSpace::JCS_GRAYSCALE);
+    assert_eq!(1, cinfo.components().len());
+
+    cinfo.set_size(33, 15);
+    cinfo.set_quality(44.);
+
+    cinfo.set_mem_dest();
+    cinfo.start_compress();
+
+    let scanlines = vec![127u8; 33*15*3];
+    assert!(cinfo.write_scanlines(&scanlines));
 
     cinfo.finish_compress();
 
