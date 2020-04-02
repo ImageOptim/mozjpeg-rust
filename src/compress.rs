@@ -196,7 +196,6 @@ impl Compress {
     }
 
     pub fn set_color_space(&mut self, color_space: ColorSpace) {
-        self.cinfo.input_components = color_space.num_components() as c_int;
         unsafe {
             ffi::jpeg_set_colorspace(&mut self.cinfo, color_space);
         }
