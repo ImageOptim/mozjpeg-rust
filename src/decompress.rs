@@ -451,7 +451,7 @@ impl<'src> DecompressStarted<'src> {
         self.dec.cinfo.output_height as usize
     }
 
-    pub fn read_scanlines<T: Copy>(&mut self) -> Option<Vec<T>> {
+    pub fn read_scanlines<T: Copy + 'static>(&mut self) -> Option<Vec<T>> {
         let num_components = self.color_space().num_components();
         assert_eq!(num_components, mem::size_of::<T>());
         let width = self.width();
