@@ -451,7 +451,9 @@ impl<'src> DecompressStarted<'src> {
         self.dec.cinfo.output_height as usize
     }
 
-    pub fn read_scanlines<T: Copy + 'static>(&mut self) -> Option<Vec<T>> {
+    /// Supports any pixel type that is marked as "plain old data", see bytemuck crate.
+    /// `[u8; 3]` and `rgb::RGB8` are fine, for example.
+    pub fn read_scanlines<T: rgb::Pod>(&mut self) -> Option<Vec<T>> {
         let num_components = self.color_space().num_components();
         assert_eq!(num_components, mem::size_of::<T>());
         let width = self.width();
@@ -586,10 +588,10 @@ fn read_file_rgb() {
     assert_eq!(ColorSpace::JCS_RGB, dinfo.color_space());
     assert_eq!(dinfo.components().len(), dinfo.color_space().num_components() as usize);
 
-    let bitmap: Vec<(u8, u8, u8)> = dinfo.read_scanlines().unwrap();
+    let bitmap: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
     assert_eq!(bitmap.len(), 45 * 30);
 
-    assert!(!bitmap.contains(&(0, 0, 0)));
+    assert!(!bitmap.contains(&[0; 3]));
 
     assert!(dinfo.finish_decompress());
 }
