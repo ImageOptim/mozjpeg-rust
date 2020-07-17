@@ -22,9 +22,3 @@ image.width();
 image.height();
 image.color_space() == mozjpeg::ColorSpace::JCS_RGB;
 ```
-
-## Error handling
-
-In Rust v1.32 and older, errors detected by libjpeg cause `panic!()`, and you can use `catch_unwind()` to handle these errors gracefully.
-
-In Rust v1.33 and later ([until issue #58760 is resolved](https://github.com/rust-lang/rust/issues/58760)) any error in libjpeg causes a crash of the entire process, and there is no way to gracefully handle even most trivial errors.
