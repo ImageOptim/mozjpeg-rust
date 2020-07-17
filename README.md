@@ -1,8 +1,6 @@
 # Rust wrapper for MozJPEG library
 
-This library is compatible with Rust versions 1.27 to 1.32 only. In Rust 1.33 or later any errors will cause the entire process to abort due to changes in Rust's unwinding
-
-----
+This library is compatible with Rust 1.45 or later.
 
 This library offers convenient reading and writing of well-compressed JPEG images using a safe Rust interface.
 
