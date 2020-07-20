@@ -224,7 +224,7 @@ impl<'src> Decompress<'src> {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_arch="wasm32")))]
     fn set_file_src(&mut self, file: Box<File>) -> io::Result<()> {
         unsafe {
             let fh = fdopen(file.as_raw_fd(), b"rb".as_ptr() as *const _);
