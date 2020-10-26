@@ -302,7 +302,7 @@ impl<'src> Decompress<'src> {
     }
 
     /// Start decompression with conversion to `colorspace`
-    pub fn with_colorspace(mut self, colorspace: ColorSpace) -> io::Result<DecompressStarted<'src>> {
+    pub fn to_colorspace(mut self, colorspace: ColorSpace) -> io::Result<DecompressStarted<'src>> {
         self.cinfo.out_color_space = colorspace;
         DecompressStarted::start_decompress(self)
     }
