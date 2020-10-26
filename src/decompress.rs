@@ -301,6 +301,12 @@ impl<'src> Decompress<'src> {
         DecompressStarted::start_decompress(self)
     }
 
+    /// Start decompression with conversion to `colorspace`
+    pub fn with_colorspace(mut self, colorspace: ColorSpace) -> io::Result<DecompressStarted<'src>> {
+        self.cinfo.out_color_space = colorspace;
+        DecompressStarted::start_decompress(self)
+    }
+
     /// Start decompression with conversion to RGBA
     pub fn rgba(mut self) -> io::Result<DecompressStarted<'src>> {
         self.cinfo.out_color_space = ffi::J_COLOR_SPACE::JCS_EXT_RGBA;
