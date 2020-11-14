@@ -3,7 +3,7 @@ use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
 use crate::component::CompInfoExt;
 use crate::errormgr::ErrorMgr;
-use crate::errormgr::PanicingErrorMgr;
+use crate::errormgr::panicking_error_mgr;
 use crate::ffi;
 use crate::ffi::boolean;
 use crate::ffi::jpeg_compress_struct;
@@ -48,7 +48,7 @@ impl Compress {
     /// By default errors cause panic and unwind through the C code,
     /// which strictly speaking is not guaranteed to work in Rust (but seems to work fine, at least in x86/64).
     pub fn new(color_space: ColorSpace) -> Compress {
-        Compress::new_err(<ErrorMgr as PanicingErrorMgr>::new(), color_space)
+        Compress::new_err(panicking_error_mgr(), color_space)
     }
 
     /// Use a specific error handler instead of the default panicking one
@@ -59,7 +59,7 @@ impl Compress {
             let mut newself = Compress {
                 cinfo: mem::zeroed(),
                 own_err: Box::new(err),
-                outbuffer: ::std::ptr::null_mut(),
+                outbuffer: ptr::null_mut(),
                 outsize: 0,
             };
 

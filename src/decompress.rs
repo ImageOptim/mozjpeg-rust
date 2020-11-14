@@ -12,7 +12,7 @@ use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
 use crate::component::CompInfoExt;
 use crate::errormgr::ErrorMgr;
-use crate::errormgr::PanicingErrorMgr;
+use crate::errormgr::panicking_error_mgr;
 use crate::marker::Marker;
 use crate::vec::VecUninitExtender;
 use libc::fdopen;
@@ -75,7 +75,7 @@ impl<'markers> DecompressConfig<'markers> {
 
     #[inline]
     fn create<'a>(self) -> Decompress<'a> {
-        let mut d = Decompress::new_err(self.err.unwrap_or_else(<ErrorMgr as PanicingErrorMgr>::new));
+        let mut d = Decompress::new_err(self.err.unwrap_or_else(panicking_error_mgr));
         for &marker in self.save_markers {
             d.save_marker(marker);
         }
