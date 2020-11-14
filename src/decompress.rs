@@ -505,14 +505,28 @@ impl<'src> Drop for Decompress<'src> {
 }
 
 #[test]
+fn read_incomplete_file() {
+    use crate::colorspace::ColorSpace;
+    use crate::colorspace::ColorSpaceExt;
+    use std::fs::File;
+    use std::io::Read;
+
+    let data = std::fs::read("tests/test.jpg").unwrap();
+    assert_eq!(2169, data.len());
+
+    let dinfo = Decompress::new_mem(&data[..data.len()/2]).unwrap();
+    let mut dinfo = dinfo.rgb().unwrap();
+    let _bitmap: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
+}
+
+#[test]
 fn read_file() {
     use crate::colorspace::ColorSpace;
     use crate::colorspace::ColorSpaceExt;
     use std::fs::File;
     use std::io::Read;
 
-    let mut data = Vec::new();
-    File::open("tests/test.jpg").unwrap().read_to_end(&mut data).unwrap();
+    let data = std::fs::read("tests/test.jpg").unwrap();
     assert_eq!(2169, data.len());
 
     let dinfo = Decompress::new_mem(&data[..]).unwrap();
