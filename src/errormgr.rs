@@ -11,6 +11,7 @@ pub fn panicking_error_mgr() -> ErrorMgr {
         let mut err = mem::zeroed();
         ffi::jpeg_std_error(&mut err);
         err.error_exit = Some(panic_error_exit);
+        err.emit_message = Some(silence_message);
         err
     }
 }
@@ -27,6 +28,9 @@ fn formatted_message(cinfo: &mut jpeg_common_struct) -> String {
             None => format!("code {}", err.msg_code),
         }
     }
+}
+
+extern "C" fn silence_message(_cinfo: &mut jpeg_common_struct, _level: c_int) {
 }
 
 extern "C" fn panic_error_exit(cinfo: &mut jpeg_common_struct) {

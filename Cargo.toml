@@ -10,7 +10,7 @@ license = "IJG"
 name = "mozjpeg"
 readme = "README.md"
 repository = "https://github.com/ImageOptim/mozjpeg-rust"
-version = "0.8.20"
+version = "0.8.21"
 edition = "2018"
 
 [dependencies]
