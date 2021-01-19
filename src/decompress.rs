@@ -26,6 +26,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::ptr;
 use std::slice;
+use fallible_collections::FallibleVec;
 
 const MAX_MCU_HEIGHT: usize = 16;
 const MAX_COMPONENTS: usize = 4;
@@ -464,7 +465,7 @@ impl<'src> DecompressStarted<'src> {
         assert_eq!(num_components, mem::size_of::<T>());
         let width = self.width();
         let height = self.height();
-        let mut image_dst: Vec<T> = Vec::with_capacity(self.height() * width);
+        let mut image_dst: Vec<T> = Vec::try_with_capacity(self.height() * width).ok()?;
         unsafe {
             image_dst.extend_uninit(height * width);
 

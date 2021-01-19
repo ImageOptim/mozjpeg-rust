@@ -10,7 +10,7 @@ license = "IJG"
 name = "mozjpeg"
 readme = "README.md"
 repository = "https://github.com/ImageOptim/mozjpeg-rust"
-version = "0.8.21"
+version = "0.8.22"
 edition = "2018"
 
 [dependencies]
@@ -18,6 +18,7 @@ libc = "0.2.80"
 mozjpeg-sys = { version = "0.10.11", default-features = false }
 rgb = { version = "0.8.25", features = ["as-bytes"] }
 arrayvec = "0.5.2"
+fallible_collections = "0.3.1"
 
 [features]
 default = ["nasm_simd", "mozjpeg-sys/unwinding"]
