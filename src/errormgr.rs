@@ -23,7 +23,8 @@ fn formatted_message(cinfo: &mut jpeg_common_struct) -> String {
             Some(fmt) => {
                 let buffer = mem::zeroed();
                 fmt(cinfo, &buffer);
-                String::from_utf8_lossy(&buffer[..]).into_owned()
+                let len = buffer.iter().take_while(|&&c| c != 0).count();
+                String::from_utf8_lossy(&buffer[..len]).into_owned()
             },
             None => format!("code {}", err.msg_code),
         }
@@ -34,7 +35,6 @@ extern "C" fn silence_message(_cinfo: &mut jpeg_common_struct, _level: c_int) {
 }
 
 extern "C" fn panic_error_exit(cinfo: &mut jpeg_common_struct) {
-    let mut msg = formatted_message(cinfo);
-    msg.insert_str(0, "libjpeg fatal error: ");
-    panic!(msg);
+    let msg = formatted_message(cinfo);
+    panic!("libjpeg fatal error: {}", msg);
 }
