@@ -79,6 +79,8 @@ impl Compress {
 
     /// Settings can't be changed after this call
     pub fn start_compress(&mut self) {
+        assert!(self.components().iter().any(|c| c.h_samp_factor == 1), "at least one h_samp_factor must be 1");
+        assert!(self.components().iter().any(|c| c.v_samp_factor == 1), "at least one v_samp_factor must be 1");
         unsafe {
             ffi::jpeg_start_compress(&mut self.cinfo, true as boolean);
         }
