@@ -3,7 +3,7 @@ use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
 use crate::component::CompInfoExt;
 use crate::errormgr::ErrorMgr;
-use crate::errormgr::panicking_error_mgr;
+use crate::errormgr::unwinding_error_mgr;
 use crate::ffi;
 use crate::ffi::boolean;
 use crate::ffi::jpeg_compress_struct;
@@ -44,15 +44,22 @@ pub enum ScanMode {
 }
 
 impl Compress {
-    /// Compress image using input in this colorspace
+    /// Compress image using input in this colorspace.
     ///
-    /// By default errors cause panic and unwind through the C code,
-    /// which strictly speaking is not guaranteed to work in Rust (but seems to work fine, at least in x86/64).
+    /// ## Panics
+    ///
+    /// You need to wrap all use of this library in `std::panic::catch_unwind()`
+    ///
+    /// By default errors cause unwind (panic) and unwind through the C code,
+    /// which strictly speaking is not guaranteed to work in Rust (but seems to work fine, at least on x86-64 and ARM).
     pub fn new(color_space: ColorSpace) -> Compress {
-        Compress::new_err(panicking_error_mgr(), color_space)
+        Compress::new_err(unwinding_error_mgr(), color_space)
     }
 
-    /// Use a specific error handler instead of the default panicking one
+    /// Use a specific error handler instead of the default unwinding one.
+    ///
+    /// Note that the error handler must either abort the process or unwind,
+    /// it can't gracefully return due to the design of libjpeg.
     ///
     /// `color_space` refers to input color space
     pub fn new_err(err: ErrorMgr, color_space: ColorSpace) -> Compress {
@@ -78,6 +85,10 @@ impl Compress {
     }
 
     /// Settings can't be changed after this call
+    ///
+    /// ## Panics
+    ///
+    /// It may panic, like all functions of this library.
     pub fn start_compress(&mut self) {
         assert!(self.components().iter().any(|c| c.h_samp_factor == 1), "at least one h_samp_factor must be 1");
         assert!(self.components().iter().any(|c| c.v_samp_factor == 1), "at least one v_samp_factor must be 1");
@@ -89,6 +100,10 @@ impl Compress {
     /// Add a marker to compressed file
     ///
     /// Data is max 64KB
+    ///
+    /// ## Panics
+    ///
+    /// It may panic, like all functions of this library.
     pub fn write_marker(&mut self, marker: Marker, data: &[u8]) {
         unsafe {
             ffi::jpeg_write_marker(
@@ -117,6 +132,10 @@ impl Compress {
     }
 
     /// Returns true if all lines in image_src (not necessarily all lines of the image) were written
+    ///
+    /// ## Panics
+    ///
+    /// It may panic, like all functions of this library.
     pub fn write_scanlines(&mut self, image_src: &[u8]) -> bool {
         assert_eq!(0, self.cinfo.raw_data_in);
         assert!(self.cinfo.input_components > 0);
@@ -155,6 +174,10 @@ impl Compress {
     /// Write YCbCr blocks pixels instead of usual color space
     ///
     /// See `raw_data_in` in libjpeg docs
+    ///
+    /// ## Panic
+    ///
+    /// Panics if raw write wasn't enabled
     pub fn write_raw_data(&mut self, image_src: &[&[u8]]) -> bool {
         if 0 == self.cinfo.raw_data_in {
             panic!("Raw data not set");
@@ -332,6 +355,10 @@ impl Compress {
 
     /// Finalize compression.
     /// In case of progressive files, this may actually start processing.
+    ///
+    /// ## Panics
+    ///
+    /// It may panic, like all functions of this library.
     pub fn finish_compress(&mut self) {
         unsafe {
             ffi::jpeg_finish_compress(&mut self.cinfo);

@@ -1,3 +1,5 @@
+use mozjpeg::*;
+
 #[test]
 fn decode_test() {
     let d = mozjpeg::Decompress::with_markers(mozjpeg::ALL_MARKERS)
