@@ -89,6 +89,7 @@ impl Compress {
     /// ## Panics
     ///
     /// It may panic, like all functions of this library.
+    #[track_caller]
     pub fn start_compress(&mut self) {
         assert!(self.components().iter().any(|c| c.h_samp_factor == 1), "at least one h_samp_factor must be 1");
         assert!(self.components().iter().any(|c| c.v_samp_factor == 1), "at least one v_samp_factor must be 1");
@@ -136,6 +137,7 @@ impl Compress {
     /// ## Panics
     ///
     /// It may panic, like all functions of this library.
+    #[track_caller]
     pub fn write_scanlines(&mut self, image_src: &[u8]) -> bool {
         assert_eq!(0, self.cinfo.raw_data_in);
         assert!(self.cinfo.input_components > 0);
@@ -178,6 +180,7 @@ impl Compress {
     /// ## Panic
     ///
     /// Panics if raw write wasn't enabled
+    #[track_caller]
     pub fn write_raw_data(&mut self, image_src: &[&[u8]]) -> bool {
         if 0 == self.cinfo.raw_data_in {
             panic!("Raw data not set");

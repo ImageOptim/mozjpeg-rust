@@ -375,6 +375,7 @@ impl<'src> Decompress<'src> {
     /// Rescales the output image by `numerator / 8` during decompression.
     /// `numerator` must be between 1 and 16.
     /// Thus setting a value of `8` will result in an unscaled image.
+    #[track_caller]
     pub fn scale(&mut self, numerator: u8) {
         assert!(1 <= numerator && numerator <= 16, "numerator must be between 1 and 16");
         self.cinfo.scale_num = numerator.into();
@@ -412,12 +413,14 @@ impl<'src> DecompressStarted<'src> {
         self.dec.cinfo.output_scanline < self.dec.cinfo.output_height
     }
 
+    #[track_caller]
     pub fn read_raw_data(&mut self, image_dest: &mut [&mut Vec<u8>]) {
         while self.read_more_chunks() {
             self.read_raw_data_chunk(image_dest);
         }
     }
 
+    #[track_caller]
     fn read_raw_data_chunk(&mut self, image_dest: &mut [&mut Vec<u8>]) {
         assert!(0 != self.dec.cinfo.raw_data_out, "Raw data not set");
 
@@ -466,6 +469,7 @@ impl<'src> DecompressStarted<'src> {
 
     /// Supports any pixel type that is marked as "plain old data", see bytemuck crate.
     /// `[u8; 3]` and `rgb::RGB8` are fine, for example.
+    #[track_caller]
     pub fn read_scanlines<T: rgb::Pod>(&mut self) -> Option<Vec<T>> {
         let num_components = self.color_space().num_components();
         assert_eq!(num_components, mem::size_of::<T>());
