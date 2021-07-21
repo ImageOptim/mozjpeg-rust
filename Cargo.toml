@@ -10,14 +10,14 @@ license = "IJG"
 name = "mozjpeg"
 readme = "README.md"
 repository = "https://github.com/ImageOptim/mozjpeg-rust"
-version = "0.9.0"
+version = "0.9.1"
 edition = "2018"
 
 [dependencies]
-libc = "0.2.94"
-mozjpeg-sys = { version = "0.12.0", default-features = false }
+libc = "0.2.98"
+mozjpeg-sys = { version = "1.0.0", default-features = false }
 rgb = { version = "0.8.27", features = ["as-bytes"] }
-arrayvec = "0.7.0"
+arrayvec = "0.7.1"
 fallible_collections = "0.4.2"
 
 [features]
@@ -26,7 +26,7 @@ nasm_simd = ["mozjpeg-sys/nasm_simd"]
 with_simd = ["mozjpeg-sys/with_simd"]
 
 [dev-dependencies]
-bytemuck = "1.5.1"
+bytemuck = "1.7.0"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
