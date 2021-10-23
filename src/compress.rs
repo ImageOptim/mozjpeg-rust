@@ -274,8 +274,8 @@ impl Compress {
     }
 
     /// If 1-100 (non-zero), it will use MozJPEG's smoothing.
-    pub fn set_smoothing_factor(&mut self, smoothing_factor: c_int) {
-        self.cinfo.smoothing_factor = smoothing_factor;
+    pub fn set_smoothing_factor(&mut self, smoothing_factor: u8) {
+        self.cinfo.smoothing_factor = smoothing_factor as c_int;
     }
 
     /// Set to `false` to make files larger for no reason
