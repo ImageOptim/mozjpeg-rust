@@ -476,22 +476,39 @@ impl<'src> DecompressStarted<'src> {
         let width = self.width();
         let height = self.height();
         let mut image_dst: Vec<T> = Vec::try_with_capacity(self.height() * width).ok()?;
-        unsafe {
-            image_dst.extend_uninit(height * width);
+        unsafe { image_dst.extend_uninit(height * width); }
+        if self.read_scanlines_into(&mut image_dst) {
+            Some(image_dst)
+        } else {
+            None
+        }
+    }
 
+    /// Supports any pixel type that is marked as "plain old data", see bytemuck crate.
+    /// `[u8; 3]` and `rgb::RGB8` are fine, for example.
+    /// Allocation-less version of `read_scanlines`
+    /// Returns true on success
+    #[track_caller]
+    pub fn read_scanlines_into<T: rgb::Pod>(&mut self, dest: &mut [T]) -> bool {
+        let num_components = self.color_space().num_components();
+        assert_eq!(num_components, mem::size_of::<T>());
+        let width = self.width();
+        let height = self.height();
+        assert_eq!(height * width, dest.len());
+        unsafe {
             while self.read_more_chunks() {
                 let start_line = self.dec.cinfo.output_scanline as usize;
-                let rest: &mut [T] = &mut image_dst[width * start_line..];
+                let rest: &mut [T] = &mut dest[width * start_line..];
                 let rows = (&mut rest.as_mut_ptr()) as *mut *mut T;
 
                 let rows_read = ffi::jpeg_read_scanlines(&mut self.dec.cinfo, rows as *mut *mut u8, 1) as usize;
                 debug_assert_eq!(start_line + rows_read, self.dec.cinfo.output_scanline as usize, "wat {}/{} at {}", rows_read, height, start_line);
                 if 0 == rows_read {
-                    return None;
+                    return false;
                 }
             }
         }
-        Some(image_dst)
+        true
     }
 
     pub fn components(&self) -> &[CompInfo] {
