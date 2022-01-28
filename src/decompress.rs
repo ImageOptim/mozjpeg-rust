@@ -409,6 +409,12 @@ impl<'src> DecompressStarted<'src> {
         self.dec.out_color_space()
     }
 
+    /// Gets the minimal buffer size for using `DecompressStarted::read_scanlines_flat_into`
+    #[inline(always)]
+    pub fn min_flat_buffer_size(&self) -> usize {
+        self.color_space().num_components() * self.width() * self.height()
+    }
+
     fn read_more_chunks(&self) -> bool {
         self.dec.cinfo.output_scanline < self.dec.cinfo.output_height
     }
@@ -503,6 +509,49 @@ impl<'src> DecompressStarted<'src> {
 
                 let rows_read = ffi::jpeg_read_scanlines(&mut self.dec.cinfo, rows as *mut *mut u8, 1) as usize;
                 debug_assert_eq!(start_line + rows_read, self.dec.cinfo.output_scanline as usize, "wat {}/{} at {}", rows_read, height, start_line);
+
+                if 0 == rows_read {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Reads the whole image scanline by scanline & returning a RGB(A)RGB(A)... flat buffer.
+    /// Those kinds of buffers are more friendly with the `image` crate
+    /// Returns Some(buffer) on success
+    pub fn read_scanlines_flat(&mut self) -> Option<Vec<u8>> {
+        let num_components = self.color_space().num_components();
+        let width = self.width();
+        let height = self.height();
+        let mut buf = vec![0; height * width * num_components];
+        if self.read_scanlines_flat_into(&mut buf) {
+            Some(buf)
+        } else {
+            None
+        }
+    }
+
+    /// Reads the whole image scanline by scanline into a RGB(A)RGB(A)... flat buffer.
+    /// Those kinds of buffers are more friendly with the `image` crate
+    /// Returns true on success
+    pub fn read_scanlines_flat_into(&mut self, dest: &mut [u8]) -> bool {
+        let num_components = self.color_space().num_components();
+        let width = self.width();
+        let height = self.height();
+        assert_eq!(height * width * num_components, dest.len());
+        let scanline_len = width * num_components;
+        unsafe {
+            while self.read_more_chunks() {
+                let start_line = self.dec.cinfo.output_scanline as usize;
+                let start_idx = start_line * scanline_len;
+                let rest: &mut [u8] = &mut dest[start_idx..start_idx + scanline_len];
+                let rows = (&mut rest.as_mut_ptr()) as *mut *mut u8;
+
+                let rows_read = ffi::jpeg_read_scanlines(&mut self.dec.cinfo, rows as *mut *mut u8, 1) as usize;
+                debug_assert_eq!(start_line + rows_read, self.dec.cinfo.output_scanline as usize, "wat {}/{} at {}", rows_read, height, start_line);
+
                 if 0 == rows_read {
                     return false;
                 }
