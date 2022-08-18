@@ -341,6 +341,24 @@ impl Compress {
         }
     }
 
+    /// Sets chroma subsampling, separately for Cb and Cr channels.
+    /// Instead of setting samples per pixel, like in `cinfo`'s `x_samp_factor`,
+    /// it sets size of chroma "pixels" per luma pixel.
+    ///
+    /// * `(1,1), (1,1)` == 4:4:4
+    /// * `(2,1), (2,1)` == 4:2:2
+    /// * `(2,2), (2,2)` == 4:2:0
+    pub fn set_chroma_sampling_pixel_sizes(&mut self, cb: (u8, u8), cr: (u8, u8)) {
+        let max_sampling_h = cb.0.max(cr.0);
+        let max_sampling_v = cb.1.max(cr.1);
+
+        let px_sizes = [(1, 1), cb, cr];
+        for (c, (h, v)) in self.components_mut().iter_mut().zip(px_sizes) {
+            c.h_samp_factor = (max_sampling_h / h).into();
+            c.v_samp_factor = (max_sampling_v / v).into();
+        }
+    }
+
     /// Write to in-memory buffer
     pub fn set_mem_dest(&mut self) {
         self.free_mem_dest();
@@ -430,9 +448,16 @@ fn write_mem() {
 
     cinfo.set_mem_dest();
 
-    for (c, samp) in cinfo.components_mut().iter_mut().zip(vec![2, 1, 1]) {
-        c.v_samp_factor = samp;
-        c.h_samp_factor = samp;
+    cinfo.set_chroma_sampling_pixel_sizes((1,1), (1,1));
+    for c in cinfo.components().iter() {
+        assert_eq!(c.v_samp_factor, 1);
+        assert_eq!(c.h_samp_factor, 1);
+    }
+
+    cinfo.set_chroma_sampling_pixel_sizes((2,2), (2,2));
+    for (c, samp) in cinfo.components().iter().zip([2, 1, 1]) {
+        assert_eq!(c.v_samp_factor, samp);
+        assert_eq!(c.h_samp_factor, samp);
     }
 
     cinfo.start_compress();
