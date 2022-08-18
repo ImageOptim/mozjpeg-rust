@@ -21,7 +21,6 @@ use std::mem;
 use std::os::raw::{c_int, c_uchar, c_uint, c_ulong, c_void};
 use std::ptr;
 use std::slice;
-use fallible_collections::FallibleVec;
 
 const MAX_MCU_HEIGHT: usize = 16;
 const MAX_COMPONENTS: usize = 4;
@@ -391,7 +390,10 @@ impl Compress {
         unsafe {
             let slice = slice::from_raw_parts(self.outbuffer, self.outsize as usize);
             let mut vec = Vec::new();
-            let res = vec.try_extend_from_slice(slice);
+            let res = vec.try_reserve(slice.len());
+            if res.is_ok() {
+                vec.extend_from_slice(slice);
+            }
             self.free_mem_dest();
             res.map_err(drop).map(|_| vec)
         }

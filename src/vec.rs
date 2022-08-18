@@ -1,4 +1,3 @@
-use fallible_collections::FallibleVec;
 
 pub trait VecUninitExtender {
     unsafe fn extend_uninit(&mut self, items: usize);
@@ -7,7 +6,8 @@ pub trait VecUninitExtender {
 impl<T: Copy> VecUninitExtender for Vec<T> {
     unsafe fn extend_uninit(&mut self, items: usize) {
         let new_len = self.len() + items;
-        FallibleVec::try_reserve(self, items).expect("oom");
+        self.try_reserve(items).expect("oom");
+        debug_assert!(self.capacity() >= new_len);
         self.set_len(new_len);
     }
 }
