@@ -4,7 +4,9 @@ use crate::ffi::jpeg_decompress_struct;
 use crate::ffi::DCTSIZE;
 use crate::ffi::JPEG_LIB_VERSION;
 use crate::ffi::J_COLOR_SPACE as COLOR_SPACE;
+use std::io::Read;
 use std::os::raw::{c_int, c_uchar, c_ulong, c_void};
+use std::ptr::NonNull;
 use crate::colorspace::ColorSpace;
 use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
@@ -13,7 +15,12 @@ use crate::errormgr::ErrorMgr;
 use crate::errormgr::unwinding_error_mgr;
 use crate::marker::Marker;
 use crate::vec::VecUninitExtender;
+use ffi::jpeg_source_mgr;
+use libc::FILE;
 use libc::fdopen;
+use libc::feof;
+use libc::fgetc;
+use libc::fread;
 use std::cmp::min;
 use std::fs::File;
 use std::io;
@@ -117,6 +124,13 @@ impl<'markers> DecompressConfig<'markers> {
     }
 }
 
+struct FileSource {
+    // The raw handle that we have passed to mozjpeg.
+    // Used to detect if we have a trailer
+    handle: *mut FILE,
+    _own_file: Box<File>
+}
+
 /// Get pixels out of a JPEG file
 ///
 /// High-level wrapper for `jpeg_decompress_struct`
@@ -130,7 +144,7 @@ impl<'markers> DecompressConfig<'markers> {
 pub struct Decompress<'src> {
     cinfo: jpeg_decompress_struct,
     own_error: Box<ErrorMgr>,
-    own_file: Option<Box<File>>,
+    file_source: Option<FileSource>,
     // Informs the borrow checker that the memory given in src must outlive the `jpeg_decompress_struct`
     _mem_marker: PhantomData<&'src [u8]>,
 }
@@ -204,7 +218,7 @@ impl<'src> Decompress<'src> {
             let mut newself = Decompress {
                 cinfo: mem::zeroed(),
                 own_error: Box::new(err),
-                own_file: None,
+                file_source: None,
                 _mem_marker: PhantomData,
             };
             newself.cinfo.common.err = &mut *newself.own_error;
@@ -233,9 +247,13 @@ impl<'src> Decompress<'src> {
             if fh.is_null() {
                 return Err(io::Error::last_os_error());
             }
-            ffi::jpeg_stdio_src(&mut self.cinfo, fh)
+            ffi::jpeg_stdio_src(&mut self.cinfo, fh);
+
+            self.file_source = Some(FileSource {
+                handle: fh,
+                _own_file: file
+            });
         }
-        self.own_file = Some(file);
         Ok(())
     }
 
@@ -568,6 +586,53 @@ impl<'src> DecompressStarted<'src> {
         self.dec.components_mut()
     }
 
+    pub fn consume_eoi_marker(&mut self) -> bool {
+        unsafe {
+            (ffi::jpeg_input_complete(&self.dec.cinfo) == 1) || {
+                ffi::jpeg_consume_input(&mut self.dec.cinfo);
+                ffi::jpeg_input_complete(&self.dec.cinfo) == 1
+            }
+        }
+    }
+
+    pub fn has_trailer(&mut self) -> io::Result<bool> {
+        if self.consume_eoi_marker() {
+            let src = unsafe {
+                    NonNull::new(self.dec.cinfo.src)
+                        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "source manager not set".to_string()))?
+                        .as_ref()
+                };
+
+            let trailer_in_buffer = src.bytes_in_buffer != 0;
+
+            let unread_trailer = match &self.dec.file_source {
+                // File source - we need to verify that we can't read any more bytes, as the EOI might have ocurred at
+                // a multiple of the buffer size with a trailer remaining unread in the file
+                Some(source) => {
+                    let mut dummy_buf = 0x00u8;
+
+                    let size = unsafe {
+                        let size = fread(&mut dummy_buf as *mut u8 as *mut _, mem::size_of::<u8>(), 1, source.handle);
+
+                        if size == 0 && feof(source.handle) == 0 {
+                            return Err(io::Error::last_os_error())
+                        }
+
+                        size
+                    };
+
+                    size != 0
+                },
+                // Memory source - we can't have an unread trailer in this case
+                None => false,
+            };
+
+            Ok(trailer_in_buffer || unread_trailer)
+        } else {
+            Err(io::Error::new(io::ErrorKind::Other, "EOI not reached".to_string()))
+        }
+    }
+
     pub fn finish_decompress(mut self) -> bool {
         unsafe { 0 != ffi::jpeg_finish_decompress(&mut self.dec.cinfo) }
     }
@@ -594,6 +659,70 @@ fn read_incomplete_file() {
     let dinfo = Decompress::new_mem(&data[..data.len()/2]).unwrap();
     let mut dinfo = dinfo.rgb().unwrap();
     let _bitmap: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
+}
+
+#[test]
+fn mem_no_trailer() {
+    let data = std::fs::read("tests/test.jpg").unwrap();
+    let dinfo = Decompress::new_mem(&data).unwrap();
+    let mut dinfo = dinfo.rgb().unwrap();
+
+    let _: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
+
+    assert!(!dinfo.has_trailer().unwrap());
+}
+
+#[test]
+fn file_no_trailer() {
+    let dinfo = Decompress::new_file(File::open("tests/test.jpg").unwrap()).unwrap();
+    let mut dinfo = dinfo.rgb().unwrap();
+
+    let _: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
+
+    assert!(!dinfo.has_trailer().unwrap());
+}
+
+#[test]
+fn mem_trailer() {
+    let data = std::fs::read("tests/trailer.jpg").unwrap();
+    let dinfo = Decompress::new_mem(&data).unwrap();
+    let mut dinfo = dinfo.rgb().unwrap();
+
+    let _: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
+
+    assert!(dinfo.has_trailer().unwrap());
+}
+
+#[test]
+fn file_trailer() {
+    let dinfo = Decompress::new_file(File::open("tests/trailer.jpg").unwrap()).unwrap();
+    let mut dinfo = dinfo.rgb().unwrap();
+
+    let _: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
+
+    assert!(dinfo.has_trailer().unwrap());
+
+    assert!(dinfo.finish_decompress());
+}
+
+#[test]
+fn file_trailer_bytes_left() {
+    let dinfo = Decompress::new_file(File::open("tests/test.jpg").unwrap()).unwrap();
+    let mut dinfo = dinfo.rgb().unwrap();
+
+    let _: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
+
+    // Consume everything in the file
+    assert!(dinfo.consume_eoi_marker());
+
+    let file = File::open("tests/test.jpg").unwrap();
+    // Simulate having test.jpg again as an unread trailer
+    unsafe {
+        let source = dinfo.dec.file_source.as_mut().unwrap();
+        source.handle = fdopen(file.as_raw_fd(), b"rb".as_ptr() as *const _);
+    }
+
+    assert!(dinfo.has_trailer().unwrap());
 }
 
 #[test]
