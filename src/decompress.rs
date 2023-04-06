@@ -621,6 +621,58 @@ fn read_incomplete_file() {
 }
 
 #[test]
+fn mem_no_trailer() {
+    let data = std::fs::read("tests/test.jpg").unwrap();
+    let dinfo = Decompress::new_mem(&data).unwrap();
+    let mut dinfo = dinfo.rgb().unwrap();
+
+    let _: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
+
+    assert_eq!(dinfo.finish_into_inner().unwrap().len(), 0);
+}
+
+#[test]
+fn file_no_trailer() {
+    let dinfo = Decompress::new_file(File::open("tests/test.jpg").unwrap()).unwrap();
+    let mut dinfo = dinfo.rgb().unwrap();
+
+    let _: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
+
+    assert_eq!(dinfo.finish_into_inner().unwrap().buffer().len(), 0);
+}
+
+#[test]
+fn mem_trailer() {
+    let data = std::fs::read("tests/trailer.jpg").unwrap();
+    let dinfo = Decompress::new_mem(&data).unwrap();
+    let mut dinfo = dinfo.rgb().unwrap();
+
+    let _: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
+
+    assert_ne!(dinfo.finish_into_inner().unwrap().len(), 0);
+}
+
+#[test]
+fn file_trailer() {
+    let dinfo = Decompress::new_file(File::open("tests/trailer.jpg").unwrap()).unwrap();
+    let mut dinfo = dinfo.rgb().unwrap();
+
+    let _: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
+
+    assert_ne!(dinfo.finish_into_inner().unwrap().buffer().len(), 0);
+}
+
+#[test]
+fn file_trailer_bytes_left() {
+    let dinfo = Decompress::new_file(File::open("tests/test.jpg").unwrap()).unwrap();
+    let mut dinfo = dinfo.rgb().unwrap();
+
+    let _: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
+
+    assert_eq!(dinfo.finish_into_inner().unwrap().buffer().len(), 0);
+}
+
+#[test]
 fn read_file() {
     use crate::colorspace::ColorSpace;
     use crate::colorspace::ColorSpaceExt;
