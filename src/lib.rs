@@ -37,6 +37,7 @@ mod marker;
 /// Quantization table presets from MozJPEG
 pub mod qtable;
 mod vec;
+mod readsrc;
 
 #[test]
 fn recompress() {
@@ -105,4 +106,25 @@ fn recompress() {
     File::create("testout-r2.jpg").unwrap().write_all(data2).unwrap();
 
     assert!(data1_len > data2_len);
+}
+
+fn fail(cinfo: &mut jpeg_common_struct, code: c_int) -> ! {
+    unsafe {
+        let err = &mut *cinfo.err;
+        err.msg_code = code;
+        if let Some(e) = err.error_exit {
+            (e)(cinfo); // should have been defined as !
+        }
+        std::process::abort();
+    }
+}
+
+fn warn(cinfo: &mut jpeg_common_struct, code: c_int) {
+    unsafe {
+        let err = &mut *cinfo.err;
+        err.msg_code = code;
+        if let Some(e) = err.emit_message {
+            (e)(cinfo, -1);
+        }
+    }
 }

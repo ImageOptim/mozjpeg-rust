@@ -1,4 +1,7 @@
 //! See the `Decompress` struct instead. You don't need to use this module directly.
+use std::io::BufRead;
+use std::io::BufReader;
+use crate::readsrc::SourceMgr;
 use crate::ffi;
 use crate::ffi::jpeg_decompress_struct;
 use crate::ffi::DCTSIZE;
@@ -19,8 +22,6 @@ use std::fs::File;
 use std::io;
 use std::marker::PhantomData;
 use std::mem;
-#[cfg(unix)]
-use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::ptr;
 use std::slice;
@@ -94,24 +95,31 @@ impl<'markers> DecompressConfig<'markers> {
     }
 
     #[inline]
-    #[cfg(unix)]
     pub fn from_path<P: AsRef<Path>>(self, path: P) -> io::Result<Decompress<'static>> {
         self.from_file(File::open(path)?)
     }
 
+    /// Reads from an already-open `File`.
+    /// Use `from_reader` if you want to customize buffer size.
     #[inline]
-    #[cfg(unix)]
     pub fn from_file(self, file: File) -> io::Result<Decompress<'static>> {
-        let mut d = self.create();
-        d.set_file_src(Box::new(file))?;
-        d.read_header()?;
-        Ok(d)
+        self.from_reader(BufReader::new(file))
     }
 
+    /// Reads from a `Vec` or a slice.
     #[inline]
     pub fn from_mem<'src>(self, mem: &'src [u8]) -> io::Result<Decompress<'src>> {
+        self.from_reader(mem)
+    }
+
+    /// Takes `BufReader`. If you have `io::Read`, wrap it in `io::BufReader::new(read)`.
+    ///
+    /// Requires `Send + Sync`, because `B` gets type-erased.
+    #[inline]
+    pub fn from_reader<'src, B: BufRead + 'src + Send + Sync>(self, mem: B) -> io::Result<Decompress<'src>> {
         let mut d = self.create();
-        d.set_mem_src(mem);
+        SourceMgr::set_src(&mut d.cinfo, mem).map_err(|_| io::ErrorKind::OutOfMemory)?;
+        d.own_src = d.cinfo.src.cast();
         d.read_header()?;
         Ok(d)
     }
@@ -130,7 +138,9 @@ impl<'markers> DecompressConfig<'markers> {
 pub struct Decompress<'src> {
     cinfo: jpeg_decompress_struct,
     own_error: Box<ErrorMgr>,
-    own_file: Option<Box<File>>,
+
+    // This is non-owning used to double-check that cinfo->src is ours
+    own_src: *const c_void,
     // Informs the borrow checker that the memory given in src must outlive the `jpeg_decompress_struct`
     _mem_marker: PhantomData<&'src [u8]>,
 }
@@ -149,6 +159,7 @@ pub struct MarkerIter<'a> {
 
 impl<'a> Iterator for MarkerIter<'a> {
     type Item = MarkerData<'a>;
+    #[inline]
     fn next(&mut self) -> Option<MarkerData<'a>> {
         if self.marker_list.is_null() {
             return None;
@@ -176,7 +187,6 @@ impl<'src> Decompress<'src> {
     }
 
     #[inline]
-    #[cfg(unix)]
     /// Decode file at path
     pub fn new_path<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::config().from_path(path)
@@ -184,7 +194,6 @@ impl<'src> Decompress<'src> {
 
     /// Decode an already-opened file
     #[inline]
-    #[cfg(unix)]
     pub fn new_file(file: File) -> io::Result<Self> {
         Self::config().from_file(file)
     }
@@ -199,12 +208,13 @@ impl<'src> Decompress<'src> {
         DecompressConfig::new()
     }
 
+    #[inline]
     fn new_err(err: ErrorMgr) -> Self {
         unsafe {
             let mut newself = Decompress {
                 cinfo: mem::zeroed(),
+                own_src: ptr::null(),
                 own_error: Box::new(err),
-                own_file: None,
                 _mem_marker: PhantomData,
             };
             newself.cinfo.common.err = &mut *newself.own_error;
@@ -216,36 +226,20 @@ impl<'src> Decompress<'src> {
         }
     }
 
+    #[inline]
     pub fn components(&self) -> &[CompInfo] {
         unsafe { slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize) }
     }
 
+    #[inline]
     pub fn components_mut(&mut self) -> &mut [CompInfo] {
         unsafe {
             slice::from_raw_parts_mut(self.cinfo.comp_info, self.cinfo.num_components as usize)
         }
     }
 
-    #[cfg(all(unix, not(target_arch="wasm32")))]
-    fn set_file_src(&mut self, file: Box<File>) -> io::Result<()> {
-        unsafe {
-            let fh = fdopen(file.as_raw_fd(), b"rb".as_ptr() as *const _);
-            if fh.is_null() {
-                return Err(io::Error::last_os_error());
-            }
-            ffi::jpeg_stdio_src(&mut self.cinfo, fh)
-        }
-        self.own_file = Some(file);
-        Ok(())
-    }
-
-    fn set_mem_src(&mut self, file_bytes: &'src [u8]) {
-        unsafe {
-            ffi::jpeg_mem_src(&mut self.cinfo, file_bytes.as_ptr(), file_bytes.len() as c_ulong);
-        }
-    }
-
     /// Result here is mostly useless, because it will panic if the file is invalid
+    #[inline]
     fn read_header(&mut self) -> io::Result<()> {
         let res = unsafe { ffi::jpeg_read_header(&mut self.cinfo, 0) };
         if res == 1 {
@@ -255,15 +249,18 @@ impl<'src> Decompress<'src> {
         }
     }
 
+    #[inline]
     pub fn color_space(&self) -> COLOR_SPACE {
         self.cinfo.jpeg_color_space
     }
 
+    #[inline]
     pub fn gamma(&self) -> f64 {
         self.cinfo.output_gamma
     }
 
     /// Markers are available only if you enable them via `with_markers()`
+    #[inline]
     pub fn markers(&self) -> MarkerIter<'_> {
         MarkerIter {
             marker_list: self.cinfo.marker_list,
@@ -375,6 +372,7 @@ impl<'src> Decompress<'src> {
     /// `numerator` must be between 1 and 16.
     /// Thus setting a value of `8` will result in an unscaled image.
     #[track_caller]
+    #[inline]
     pub fn scale(&mut self, numerator: u8) {
         assert!(1 <= numerator && numerator <= 16, "numerator must be between 1 and 16");
         self.cinfo.scale_num = numerator.into();
@@ -576,6 +574,26 @@ impl<'src> DecompressStarted<'src> {
 impl<'src> Drop for Decompress<'src> {
     fn drop(&mut self) {
         unsafe {
+            // unfortunately term_source alone can't be used as a reliable destructor callback,
+            // because libjpeg only calls it in finish_decompress.
+            // If you abort without completing decompression, it won't be called.
+            // In libjpeg this isn't a problem, because source fd isn't owned (so never closed),
+            // and all memory is allocated from the pool (so never freed individually).
+            // Rust has its Drop that should always run, so here's the kludge.
+
+            if let Some(src) = self.cinfo.src.as_mut() {
+                let src_ptr = src as *const _ as *const c_void;
+                // this wrapper is not supposed to allow setting other managers, but just to be 100% safe
+                // it checks if libjpeg still has our manager instance set
+                if src_ptr == self.own_src {
+                    if let Some(term) = src.term_source {
+                        (term)(&mut self.cinfo);
+                        // our srcmanager is expected to null this ptr to prevent double-free,
+                        // and we've compared src pointers to ensure it was our src manager.
+                        debug_assert!(self.cinfo.src.is_null());
+                    }
+                }
+            }
             ffi::jpeg_destroy_decompress(&mut self.cinfo);
         }
     }
@@ -652,15 +670,19 @@ fn read_file() {
 }
 
 #[test]
-#[cfg(unix)]
 fn no_markers() {
     use crate::colorspace::ColorSpace;
     use crate::colorspace::ColorSpaceExt;
     use std::fs::File;
     use std::io::Read;
 
-    let dinfo = Decompress::new_path("tests/test.jpg").unwrap();
+    // btw tests src manager with 1-byte len, which requires libjpeg to refill the buffer a lot
+    let tricky_buf = io::BufReader::with_capacity(1, File::open("tests/test.jpg").unwrap());
+    let dinfo = Decompress::config().from_reader(tricky_buf).unwrap();
     assert_eq!(0, dinfo.markers().count());
+
+    let res = dinfo.rgb().unwrap().read_scanlines::<[u8; 3]>().unwrap();
+    assert_eq!(res.len(), 45*30);
 
     let dinfo = Decompress::with_markers(&[]).from_path("tests/test.jpg").unwrap();
     assert_eq!(0, dinfo.markers().count());
@@ -673,8 +695,7 @@ fn read_file_rgb() {
     use std::fs::File;
     use std::io::Read;
 
-    let mut data = Vec::new();
-    File::open("tests/test.jpg").unwrap().read_to_end(&mut data).unwrap();
+    let data = std::fs::read("tests/test.jpg").unwrap();
     let dinfo = Decompress::with_markers(ALL_MARKERS).from_mem(&data[..]).unwrap();
 
     assert_eq!(ColorSpace::JCS_YCbCr, dinfo.color_space());
@@ -691,4 +712,24 @@ fn read_file_rgb() {
     assert!(!bitmap.contains(&[0; 3]));
 
     assert!(dinfo.finish_decompress());
+}
+
+#[test]
+fn drops_reader() {
+    struct CountsDrops<'a, R> {drop_count: &'a mut u8, reader: R}
+    impl<R> Drop for CountsDrops<'_, R> {
+        fn drop(&mut self) {
+            *self.drop_count += 1;
+        }
+    }
+    impl<R: io::Read> io::Read for CountsDrops<'_, R> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.reader.read(buf) }
+    }
+    let mut drop_count = 0;
+    let r = Decompress::config().from_reader(BufReader::new(CountsDrops {
+        drop_count: &mut drop_count,
+        reader: File::open("tests/test.jpg").unwrap(),
+    })).unwrap();
+    drop(r);
+    assert_eq!(1, drop_count);
 }

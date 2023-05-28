@@ -10,12 +10,12 @@ license = "IJG"
 name = "mozjpeg"
 readme = "README.md"
 repository = "https://github.com/ImageOptim/mozjpeg-rust"
-version = "0.9.4"
+version = "0.9.5"
 edition = "2021"
 
 [dependencies]
 libc = "0.2.126"
-mozjpeg-sys = { version = "1.0.3", default-features = false }
+mozjpeg-sys = { version = "1.1", default-features = false }
 rgb = { version = "0.8.32", features = ["as-bytes"] }
 arrayvec = "0.7.2"
 
