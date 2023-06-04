@@ -15,6 +15,7 @@ use crate::ffi::J_INT_PARAM;
 use crate::marker::Marker;
 use crate::qtable::QTable;
 use arrayvec::ArrayVec;
+use crate::writedst::DestinationMgr;
 use std::cmp::min;
 use std::mem;
 use std::io;
@@ -43,8 +44,7 @@ pub enum ScanMode {
 
 pub struct CompressStarted<W> {
     compress: Compress,
-    outbuffer: Box<(*mut c_uchar, c_ulong)>,
-    writer: W,
+    dest_mgr: Box<DestinationMgr<W>>,
 }
 
 impl Compress {
@@ -95,16 +95,21 @@ impl Compress {
     /// ## Panics
     ///
     /// It may panic, like all functions of this library.
-    pub fn start_compress<W: io::Write>(self, write_to: W) -> io::Result<CompressStarted<W>> {
+    pub fn start_compress<W: io::Write>(self, writer: W) -> io::Result<CompressStarted<W>> {
         if !self.components().iter().any(|c| c.h_samp_factor == 1) { return Err(io::Error::new(io::ErrorKind::InvalidInput, "at least one h_samp_factor must be 1")); }
         if !self.components().iter().any(|c| c.v_samp_factor == 1) { return Err(io::Error::new(io::ErrorKind::InvalidInput, "at least one v_samp_factor must be 1")); }
+
+        // 1bpp, rounded to 4K page
+        let expected_file_size = (self.cinfo.image_width as usize * self.cinfo.image_height as usize / 8 + 4095) & !4095;
+        let write_buffer_capacity = expected_file_size.clamp(1<<12, 1<<16);
+
         let mut started = CompressStarted {
             compress: self,
-            writer: write_to,
-            outbuffer: Box::new((ptr::null_mut(), 0)), // these must have a stable address
+            dest_mgr: Box::new(DestinationMgr::new(writer, write_buffer_capacity)),
         };
         unsafe {
-            ffi::jpeg_mem_dest(&mut started.compress.cinfo, &mut started.outbuffer.0, &mut started.outbuffer.1);
+            let dest_ptr = addr_of_mut!(started.dest_mgr.as_mut().iface);
+            started.compress.cinfo.dest = dest_ptr;
             ffi::jpeg_start_compress(&mut started.compress.cinfo, true as boolean);
         }
         Ok(started)
@@ -399,19 +404,9 @@ impl<W: io::Write> CompressStarted<W> {
         unsafe {
             ffi::jpeg_finish_compress(&mut self.compress.cinfo);
         }
-        if self.outbuffer.0.is_null() || 0 == self.outbuffer.1 {
-            return Err(io::ErrorKind::UnexpectedEof.into());
-        }
-        let data = unsafe {
-            slice::from_raw_parts(self.outbuffer.0, self.outbuffer.1 as usize)
-        };
-        self.writer.write_all(data)?;
-        unsafe {
-            libc::free(self.outbuffer.0.cast());
-            self.outbuffer.0 = ptr::null_mut();
-        }
+        self.compress.cinfo.dest = ptr::null_mut();
         drop(self.compress);
-        Ok(self.writer)
+        Ok(self.dest_mgr.into_inner())
     }
 
     #[doc(hidden)]
@@ -422,8 +417,9 @@ impl<W: io::Write> CompressStarted<W> {
 
     /// Give up writing, return incomplete result
     #[cold]
-    pub fn abort(self) -> W {
-        self.writer
+    pub fn abort(mut self) -> W {
+        self.compress.cinfo.dest = ptr::null_mut();
+        self.dest_mgr.into_inner()
     }
 }
 
@@ -431,6 +427,7 @@ impl Drop for Compress {
     #[inline]
     fn drop(&mut self) {
         unsafe {
+            self.cinfo.dest = ptr::null_mut();
             ffi::jpeg_destroy_compress(&mut self.cinfo);
         }
     }

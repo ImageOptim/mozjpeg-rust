@@ -40,6 +40,7 @@ mod marker;
 pub mod qtable;
 mod vec;
 mod readsrc;
+mod writedst;
 
 #[test]
 fn recompress() {
