@@ -716,9 +716,12 @@ fn read_file_rgb() {
 
 #[test]
 fn drops_reader() {
+    #[repr(align(1024))]
     struct CountsDrops<'a, R> {drop_count: &'a mut u8, reader: R}
+
     impl<R> Drop for CountsDrops<'_, R> {
         fn drop(&mut self) {
+            assert!(self as *mut _ as usize % 1024 == 0); // alignment
             *self.drop_count += 1;
         }
     }

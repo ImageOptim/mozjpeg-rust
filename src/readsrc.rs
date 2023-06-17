@@ -1,3 +1,4 @@
+use std::os::raw::c_void;
 use crate::{fail, warn};
 use mozjpeg_sys::boolean;
 use mozjpeg_sys::jpeg_decompress_struct;
@@ -18,18 +19,18 @@ pub(crate) struct SourceMgr<R> {
 
 impl<R: BufRead> SourceMgr<R> {
     pub(crate) fn set_src(cinfo: &mut jpeg_decompress_struct, reader: R) -> Result<(), ()> {
-        unsafe {
-            if !cinfo.src.is_null() {
-                return Err(());
-            }
-
-            let alloc_small = (*cinfo.common.mem).alloc_small.ok_or(())?;
-            // JPOOL_IMAGE should be enough, but I'm not going to risk UAF for a few bytes. TJ API uses permanent.
-            let head: *mut MaybeUninit<Self> = (alloc_small)(&mut cinfo.common, JPOOL_PERMANENT, std::mem::size_of::<Self>()).cast();
-            let mut head = NonNull::new(head).ok_or(())?;
-            head.as_mut().write(Self::new(reader));
-            cinfo.src = &mut head.as_mut().assume_init_mut().iface;
+        if !cinfo.src.is_null() {
+            return Err(());
         }
+
+        // cinfo.common.mem.alloc_small can't guarantee alignment,
+        // and `R` could require an unusual one.
+        let src = Box::new(Self::new(reader));
+
+        assert_eq!(std::mem::size_of::<*mut c_void>(), std::mem::size_of_val(&src)); // not a fat pointer
+        cinfo.src = Box::into_raw(src).cast();
+
+        debug_assert!(unsafe { Self::cast(cinfo); true });
         Ok(())
     }
 
@@ -122,8 +123,9 @@ impl<R: BufRead> SourceMgr<R> {
     }
 
     unsafe extern "C" fn term_source(cinfo: &mut jpeg_decompress_struct) {
-        let this = Self::cast(cinfo);
-        let _: Self = ptr::read(this); // runs destructor for reader
-        cinfo.src = ptr::null_mut(); // this is in jpeg's mempool
+        let _ = Self::cast(cinfo); // checks
+        let ptr: *mut Self = cinfo.src.cast();
+        cinfo.src = ptr::null_mut();
+        let _ = Box::from_raw(ptr); // drops
     }
 }
