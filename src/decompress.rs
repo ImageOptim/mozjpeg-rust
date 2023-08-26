@@ -242,7 +242,7 @@ impl<'src> Decompress<'src> {
     #[inline]
     fn read_header(&mut self) -> io::Result<()> {
         let res = unsafe { ffi::jpeg_read_header(&mut self.cinfo, 0) };
-        if res == 1 {
+        if res == 1 || res == 2 {
             Ok(())
         } else {
             Err(io::Error::new(io::ErrorKind::Other, format!("JPEG err {}", res)))
