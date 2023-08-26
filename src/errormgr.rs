@@ -16,26 +16,41 @@ pub fn unwinding_error_mgr() -> ErrorMgr {
     }
 }
 
-fn formatted_message(prefix: & str, cinfo: &mut jpeg_common_struct) -> String {
+#[cold]
+fn formatted_message(prefix: &str, cinfo: &mut jpeg_common_struct) -> String {
     unsafe {
         let err = cinfo.err.as_ref().unwrap();
         match err.format_message {
             Some(fmt) => {
                 let buffer = mem::zeroed();
                 fmt(cinfo, &buffer);
-                let len = buffer.iter().take_while(|&&c| c != 0).count();
-                format!("{}{}", prefix, String::from_utf8_lossy(&buffer[..len]))
+                let buf = buffer.split(|&c| c == 0).next().unwrap_or_default();
+                let msg = String::from_utf8_lossy(buf);
+                let mut out = String::with_capacity(prefix.len() + msg.len());
+                push_str_in_cap(&mut out, prefix);
+                push_str_in_cap(&mut out, &msg);
+                out
             },
             None => format!("{}code {}", prefix, err.msg_code),
         }
     }
 }
 
+fn push_str_in_cap(out: &mut String, s: &str) {
+    let needs_to_grow = s.as_bytes().len() > out.capacity().wrapping_sub(out.len());
+    if !needs_to_grow {
+        out.push_str(s);
+    }
+}
+
+#[cold]
 extern "C" fn silence_message(_cinfo: &mut jpeg_common_struct, _level: c_int) {
 }
 
+#[cold]
 extern "C" fn unwind_error_exit(cinfo: &mut jpeg_common_struct) {
     let msg = formatted_message("libjpeg fatal error: ", cinfo);
     // avoids calling panic handler
     std::panic::resume_unwind(Box::new(msg));
 }
+

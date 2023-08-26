@@ -42,7 +42,7 @@ fn encode_subsampled_jpeg((width, height, data): (usize, usize, Vec<[u8; 3]>)) -
 
     encoder.set_color_space(mozjpeg::ColorSpace::JCS_YCbCr);
     {
-        let mut comp = encoder.components_mut();
+        let comp = encoder.components_mut();
         comp[0].h_samp_factor = 1;
         comp[0].v_samp_factor = 1;
 
