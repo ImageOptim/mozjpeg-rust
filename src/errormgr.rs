@@ -44,11 +44,11 @@ fn push_str_in_cap(out: &mut String, s: &str) {
 }
 
 #[cold]
-extern "C" fn silence_message(_cinfo: &mut jpeg_common_struct, _level: c_int) {
+extern "C-unwind" fn silence_message(_cinfo: &mut jpeg_common_struct, _level: c_int) {
 }
 
 #[cold]
-extern "C" fn unwind_error_exit(cinfo: &mut jpeg_common_struct) {
+extern "C-unwind" fn unwind_error_exit(cinfo: &mut jpeg_common_struct) {
     let msg = formatted_message("libjpeg fatal error: ", cinfo);
     // avoids calling panic handler
     std::panic::resume_unwind(Box::new(msg));

@@ -63,7 +63,7 @@ impl<R: BufRead> SourceMgr<R> {
     unsafe fn cast(cinfo: &mut jpeg_decompress_struct) -> &mut Self {
         let this: &mut Self = &mut *cinfo.src.cast();
         // Type alias to unify higher-ranked lifetimes
-        type FnPtr<'a> = unsafe extern "C" fn(cinfo: &'a mut jpeg_decompress_struct);
+        type FnPtr<'a> = unsafe extern "C-unwind" fn(cinfo: &'a mut jpeg_decompress_struct);
         // This is a redundant safety check to ensure the struct is ours
         if Some::<FnPtr>(Self::init_source) != this.iface.init_source {
             fail(&mut cinfo.common, JERR_VIRTUAL_BUG);
@@ -71,7 +71,7 @@ impl<R: BufRead> SourceMgr<R> {
         this
     }
 
-    unsafe extern "C" fn init_source(cinfo: &mut jpeg_decompress_struct) {
+    unsafe extern "C-unwind" fn init_source(cinfo: &mut jpeg_decompress_struct) {
         // Do nothing, buffer has been filled by new()
         let _s = Self::cast(cinfo);
         debug_assert!(!_s.iface.next_input_byte.is_null());
@@ -107,7 +107,7 @@ impl<R: BufRead> SourceMgr<R> {
     /// In typical applications, it should read fresh data
     ///    into the buffer (ignoring the current state of next_input_byte and
     ///    bytes_in_buffer)
-    unsafe extern "C" fn fill_input_buffer(cinfo: &mut jpeg_decompress_struct) -> boolean {
+    unsafe extern "C-unwind" fn fill_input_buffer(cinfo: &mut jpeg_decompress_struct) -> boolean {
         let this = Self::cast(cinfo);
         match this.fill_input_buffer_impl() {
             Ok(()) => 1,
@@ -125,7 +125,7 @@ impl<R: BufRead> SourceMgr<R> {
         }
     }
 
-    unsafe extern "C" fn skip_input_data(cinfo: &mut jpeg_decompress_struct, num_bytes: c_long) {
+    unsafe extern "C-unwind" fn skip_input_data(cinfo: &mut jpeg_decompress_struct, num_bytes: c_long) {
         if num_bytes <= 0 {
             return;
         }
@@ -149,7 +149,7 @@ impl<R: BufRead> SourceMgr<R> {
         }
     }
 
-    unsafe extern "C" fn term_source(cinfo: &mut jpeg_decompress_struct) {
+    unsafe extern "C-unwind" fn term_source(cinfo: &mut jpeg_decompress_struct) {
         let _ = Self::cast(cinfo); // checks
         let ptr: *mut Self = cinfo.src.cast();
         cinfo.src = ptr::null_mut();
