@@ -108,6 +108,7 @@ fn recompress() {
     assert!(data1_len > data2_len);
 }
 
+#[cold]
 fn fail(cinfo: &mut jpeg_common_struct, code: c_int) -> ! {
     unsafe {
         let err = &mut *cinfo.err;

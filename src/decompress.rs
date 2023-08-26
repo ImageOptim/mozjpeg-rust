@@ -118,7 +118,7 @@ impl<'markers> DecompressConfig<'markers> {
     #[inline]
     pub fn from_reader<'src, B: BufRead + 'src + Send + Sync>(self, mem: B) -> io::Result<Decompress<'src>> {
         let mut d = self.create();
-        SourceMgr::set_src(&mut d.cinfo, mem).map_err(|_| io::ErrorKind::OutOfMemory)?;
+        SourceMgr::set_src(&mut d.cinfo, mem)?;
         d.own_src = d.cinfo.src.cast();
         d.read_header()?;
         Ok(d)
@@ -139,9 +139,10 @@ pub struct Decompress<'src> {
     cinfo: jpeg_decompress_struct,
     own_error: Box<ErrorMgr>,
 
-    // This is non-owning used to double-check that cinfo->src is ours
+    /// This is non-owning used to double-check that cinfo->src is ours.
+    /// It can't be an owning Box, because the struct has type-erased the reader.
     own_src: *const c_void,
-    // Informs the borrow checker that the memory given in src must outlive the `jpeg_decompress_struct`
+    /// Informs the borrow checker that the memory given in src must outlive the `jpeg_decompress_struct`
     _mem_marker: PhantomData<&'src [u8]>,
 }
 
