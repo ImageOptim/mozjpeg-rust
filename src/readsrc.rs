@@ -14,34 +14,14 @@ use std::ptr;
 
 #[repr(C)]
 pub(crate) struct SourceMgr<R> {
-    iface: jpeg_source_mgr,
+    pub(crate) iface: jpeg_source_mgr,
     to_consume: usize,
     reader: R,
 }
 
 impl<R: BufRead> SourceMgr<R> {
     #[inline]
-    pub(crate) fn set_src(cinfo: &mut jpeg_decompress_struct, reader: R) -> io::Result<()> {
-        if !cinfo.src.is_null() {
-            return Err(io::ErrorKind::AlreadyExists.into());
-        }
-
-        // Handle first read on Rust's side, to have a chance to report an I/O error without aborting
-        let this = Self::new(reader)?;
-
-        // cinfo.common.mem.alloc_small can't guarantee alignment,
-        // and `R` could require an unusual one.
-        let src = Box::new(this);
-
-        assert_eq!(std::mem::size_of::<*mut c_void>(), std::mem::size_of_val(&src)); // not a fat pointer
-        cinfo.src = Box::into_raw(src).cast();
-
-        debug_assert!(unsafe { Self::cast(cinfo); true });
-        Ok(())
-    }
-
-    #[inline]
-    fn new(reader: R) -> io::Result<Self> {
+    pub(crate) fn new(reader: R) -> io::Result<Self> {
         let mut this = Self {
             iface: jpeg_source_mgr {
                 next_input_byte: ptr::null_mut(),
@@ -118,8 +98,6 @@ impl<R: BufRead> SourceMgr<R> {
                 1
             },
             Err(_) => {
-                // libjpeg won't call term_source itself if fail unwinds
-                Self::term_source(cinfo);
                 fail(&mut cinfo.common, JERR_FILE_READ);
             }
         }
@@ -143,7 +121,6 @@ impl<R: BufRead> SourceMgr<R> {
                 break;
             }
             if let Err(_) = this.fill_input_buffer_impl() {
-                Self::term_source(cinfo);
                 fail(&mut cinfo.common, JERR_FILE_READ);
             }
         }
@@ -151,10 +128,6 @@ impl<R: BufRead> SourceMgr<R> {
 
     unsafe extern "C-unwind" fn term_source(cinfo: &mut jpeg_decompress_struct) {
         let _ = Self::cast(cinfo); // checks
-        let ptr: *mut Self = cinfo.src.cast();
         cinfo.src = ptr::null_mut();
-        if !ptr.is_null() {
-            drop(Box::from_raw(ptr)); // user-supplied reader drops here
-        }
     }
 }

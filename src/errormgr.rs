@@ -6,9 +6,9 @@ use std::os::raw::c_int;
 
 pub use crate::ffi::jpeg_error_mgr as ErrorMgr;
 
-pub fn unwinding_error_mgr() -> ErrorMgr {
+pub(crate) fn unwinding_error_mgr() -> Box<ErrorMgr> {
     unsafe {
-        let mut err = mem::zeroed();
+        let mut err = Box::new(mem::zeroed());
         ffi::jpeg_std_error(&mut err);
         err.error_exit = Some(unwind_error_exit);
         err.emit_message = Some(silence_message);

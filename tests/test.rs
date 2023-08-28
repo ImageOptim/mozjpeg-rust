@@ -11,7 +11,7 @@ pub fn decompress_jpeg(jpeg: &[u8]) -> Vec<Vec<u8>> {
     {
         let mut bitmap_refs: Vec<_> = bitmaps.iter_mut().collect();
         decomp.read_raw_data(&mut bitmap_refs);
-        decomp.finish_decompress();
+        decomp.finish().unwrap();
     }
 
     return bitmaps;

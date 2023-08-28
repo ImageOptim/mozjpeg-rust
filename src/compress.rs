@@ -20,6 +20,7 @@ use std::cmp::min;
 use std::mem;
 use std::os::raw::{c_int, c_uchar, c_uint, c_ulong, c_void};
 use std::ptr;
+use std::ptr::addr_of_mut;
 use std::slice;
 
 const MAX_MCU_HEIGHT: usize = 16;
@@ -61,16 +62,15 @@ impl Compress {
     /// it can't gracefully return due to the design of libjpeg.
     ///
     /// `color_space` refers to input color space
-    pub fn new_err(err: ErrorMgr, color_space: ColorSpace) -> Compress {
+    pub fn new_err(err: Box<ErrorMgr>, color_space: ColorSpace) -> Compress {
         unsafe {
             let mut newself = Compress {
                 cinfo: mem::zeroed(),
-                own_err: Box::new(err),
+                own_err: err,
                 outbuffer: ptr::null_mut(),
                 outsize: 0,
             };
-
-            newself.cinfo.common.err = &mut *newself.own_err;
+            newself.cinfo.common.err = addr_of_mut!(*newself.own_err);
 
             let s = mem::size_of_val(&newself.cinfo) as usize;
             ffi::jpeg_CreateCompress(&mut newself.cinfo, JPEG_LIB_VERSION, s);

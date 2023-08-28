@@ -62,7 +62,7 @@ fn recompress() {
     let mut bitmaps = [&mut Vec::new(), &mut Vec::new(), &mut Vec::new()];
     dinfo.read_raw_data(&mut bitmaps);
 
-    assert!(dinfo.finish_decompress());
+    dinfo.finish().unwrap();
 
     fn write_jpeg(bitmaps: &[&mut Vec<u8>; 3], samp_factors: &Vec<i32>, scale: (f32, f32)) -> Vec<u8> {
 
