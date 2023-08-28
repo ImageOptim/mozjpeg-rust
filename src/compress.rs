@@ -15,9 +15,9 @@ use crate::ffi::J_INT_PARAM;
 use crate::marker::Marker;
 use crate::qtable::QTable;
 use arrayvec::ArrayVec;
-use libc::free;
 use std::cmp::min;
 use std::mem;
+use std::io;
 use std::os::raw::{c_int, c_uchar, c_uint, c_ulong, c_void};
 use std::ptr;
 use std::ptr::addr_of_mut;
@@ -32,8 +32,6 @@ const MAX_COMPONENTS: usize = 4;
 pub struct Compress {
     cinfo: jpeg_compress_struct,
     own_err: Box<ErrorMgr>,
-    outbuffer: *mut c_uchar,
-    outsize: c_ulong,
 }
 
 #[derive(Copy, Clone)]
@@ -41,6 +39,12 @@ pub enum ScanMode {
     AllComponentsTogether = 0,
     ScanPerComponent = 1,
     Auto = 2,
+}
+
+pub struct CompressStarted<W> {
+    compress: Compress,
+    outbuffer: Box<(*mut c_uchar, c_ulong)>,
+    writer: W,
 }
 
 impl Compress {
@@ -67,8 +71,6 @@ impl Compress {
             let mut newself = Compress {
                 cinfo: mem::zeroed(),
                 own_err: err,
-                outbuffer: ptr::null_mut(),
-                outsize: 0,
             };
             newself.cinfo.common.err = addr_of_mut!(*newself.own_err);
 
@@ -83,20 +85,33 @@ impl Compress {
         }
     }
 
-    /// Settings can't be changed after this call
+    #[doc(hidden)]
+    #[deprecated(note = "Give a Vec to start_compress instead")]
+    pub fn set_mem_dest(&self) {
+    }
+
+    /// Settings can't be changed after this call. Returns a `CompressStarted` struct that will handle the rest of the writing.
     ///
     /// ## Panics
     ///
     /// It may panic, like all functions of this library.
-    #[track_caller]
-    pub fn start_compress(&mut self) {
-        assert!(self.components().iter().any(|c| c.h_samp_factor == 1), "at least one h_samp_factor must be 1");
-        assert!(self.components().iter().any(|c| c.v_samp_factor == 1), "at least one v_samp_factor must be 1");
+    pub fn start_compress<W: io::Write>(self, write_to: W) -> io::Result<CompressStarted<W>> {
+        if !self.components().iter().any(|c| c.h_samp_factor == 1) { return Err(io::Error::new(io::ErrorKind::InvalidInput, "at least one h_samp_factor must be 1")); }
+        if !self.components().iter().any(|c| c.v_samp_factor == 1) { return Err(io::Error::new(io::ErrorKind::InvalidInput, "at least one v_samp_factor must be 1")); }
+        let mut started = CompressStarted {
+            compress: self,
+            writer: write_to,
+            outbuffer: Box::new((ptr::null_mut(), 0)), // these must have a stable address
+        };
         unsafe {
-            ffi::jpeg_start_compress(&mut self.cinfo, true as boolean);
+            ffi::jpeg_mem_dest(&mut started.compress.cinfo, &mut started.outbuffer.0, &mut started.outbuffer.1);
+            ffi::jpeg_start_compress(&mut started.compress.cinfo, true as boolean);
         }
+        Ok(started)
     }
+}
 
+impl<W> CompressStarted<W> {
     /// Add a marker to compressed file
     ///
     /// Data is max 64KB
@@ -107,7 +122,7 @@ impl Compress {
     pub fn write_marker(&mut self, marker: Marker, data: &[u8]) {
         unsafe {
             ffi::jpeg_write_marker(
-                &mut self.cinfo,
+                &mut self.compress.cinfo,
                 marker.into(),
                 data.as_ptr(),
                 data.len() as c_uint,
@@ -115,6 +130,18 @@ impl Compress {
         }
     }
 
+    /// Read-only view of component information
+    pub fn components(&self) -> &[CompInfo] {
+        self.compress.components()
+    }
+
+
+    fn can_write_more_lines(&self) -> bool {
+        self.compress.cinfo.next_scanline < self.compress.cinfo.image_height
+    }
+}
+
+impl Compress {
     /// Expose components for modification, e.g. to set chroma subsampling
     pub fn components_mut(&mut self) -> &mut [CompInfo] {
         unsafe {
@@ -126,27 +153,25 @@ impl Compress {
     pub fn components(&self) -> &[CompInfo] {
         unsafe { slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize) }
     }
+}
 
-    fn can_write_more_lines(&self) -> bool {
-        self.cinfo.next_scanline < self.cinfo.image_height
-    }
-
-    /// Returns true if all lines in image_src (not necessarily all lines of the image) were written
+impl<W> CompressStarted<W> {
+    /// Returns Ok(()) if all lines in image_src (not necessarily all lines of the image) were written
     ///
     /// ## Panics
     ///
     /// It may panic, like all functions of this library.
-    #[track_caller]
-    pub fn write_scanlines(&mut self, image_src: &[u8]) -> bool {
-        assert_eq!(0, self.cinfo.raw_data_in);
-        assert!(self.cinfo.input_components > 0);
-        assert!(self.cinfo.image_width > 0);
+    pub fn write_scanlines(&mut self, image_src: &[u8]) -> io::Result<()> {
+        if self.compress.cinfo.raw_data_in != 0 ||
+            self.compress.cinfo.input_components <= 0 ||
+            self.compress.cinfo.image_width == 0 {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
 
-        let byte_width = self.cinfo.image_width as usize * self.cinfo.input_components as usize;
+        let byte_width = self.compress.cinfo.image_width as usize * self.compress.cinfo.input_components as usize;
         for rows in image_src.chunks(MAX_MCU_HEIGHT * byte_width) {
             let mut row_pointers = ArrayVec::<_, MAX_MCU_HEIGHT>::new();
-            for row in rows.chunks(byte_width) {
-                debug_assert!(row.len() == byte_width);
+            for row in rows.chunks_exact(byte_width) {
                 row_pointers.push(row.as_ptr());
             }
 
@@ -155,20 +180,20 @@ impl Compress {
             while rows_left > 0 {
                 unsafe {
                     let rows_written = ffi::jpeg_write_scanlines(
-                        &mut self.cinfo,
+                        &mut self.compress.cinfo,
                         row_pointers,
                         rows_left,
                     );
                     debug_assert!(rows_left >= rows_written);
                     if rows_written == 0 {
-                        return false;
+                        return Err(io::ErrorKind::UnexpectedEof.into());
                     }
                     rows_left -= rows_written;
                     row_pointers = row_pointers.add(rows_written as usize);
                 }
             }
         }
-        true
+        Ok(())
     }
 
     /// Advanced. Only possible after `set_raw_data_in()`.
@@ -181,11 +206,11 @@ impl Compress {
     /// Panics if raw write wasn't enabled
     #[track_caller]
     pub fn write_raw_data(&mut self, image_src: &[&[u8]]) -> bool {
-        if 0 == self.cinfo.raw_data_in {
+        if 0 == self.compress.cinfo.raw_data_in {
             panic!("Raw data not set");
         }
 
-        let mcu_height = self.cinfo.max_v_samp_factor as usize * DCTSIZE;
+        let mcu_height = self.compress.cinfo.max_v_samp_factor as usize * DCTSIZE;
         if mcu_height > MAX_MCU_HEIGHT {
             panic!("Subsampling factor too large");
         }
@@ -202,7 +227,7 @@ impl Compress {
             }
         }
 
-        let mut start_row = self.cinfo.next_scanline as usize;
+        let mut start_row = self.compress.cinfo.next_scanline as usize;
         while self.can_write_more_lines() {
             unsafe {
                 let mut row_ptrs = [[ptr::null::<u8>(); MAX_MCU_HEIGHT]; MAX_COMPONENTS];
@@ -214,7 +239,7 @@ impl Compress {
                     let input_height = image_src[ci].len() / row_stride;
 
                     let comp_start_row = start_row * comp_info.v_samp_factor as usize
-                        / self.cinfo.max_v_samp_factor as usize;
+                        / self.compress.cinfo.max_v_samp_factor as usize;
                     let comp_height = min(
                         input_height - comp_start_row,
                         DCTSIZE * comp_info.v_samp_factor as usize,
@@ -231,7 +256,7 @@ impl Compress {
                     comp_ptrs[ci] = row_ptrs[ci].as_ptr();
                 }
 
-                let rows_written = ffi::jpeg_write_raw_data(&mut self.cinfo, comp_ptrs.as_ptr(), mcu_height as u32) as usize;
+                let rows_written = ffi::jpeg_write_raw_data(&mut self.compress.cinfo, comp_ptrs.as_ptr(), mcu_height as u32) as usize;
                 if 0 == rows_written {
                     return false;
                 }
@@ -240,7 +265,9 @@ impl Compress {
         }
         true
     }
+}
 
+impl Compress {
     /// Set color space of JPEG being written, different from input color space
     ///
     /// See `jpeg_set_colorspace` in libjpeg docs
@@ -358,69 +385,47 @@ impl Compress {
             c.v_samp_factor = (max_sampling_v / v).into();
         }
     }
+}
 
-    /// Write to in-memory buffer
-    pub fn set_mem_dest(&mut self) {
-        self.free_mem_dest();
-        unsafe {
-            ffi::jpeg_mem_dest(&mut self.cinfo, &mut self.outbuffer, &mut self.outsize);
-        }
-    }
-
-    /// Destroy in-memory buffer
-    fn free_mem_dest(&mut self) {
-        if !self.outbuffer.is_null() {
-            unsafe {
-                free(self.outbuffer as *mut c_void);
-            }
-            self.outbuffer = ptr::null_mut();
-            self.outsize = 0;
-        }
-    }
-
+impl<W: io::Write> CompressStarted<W> {
     /// Finalize compression.
     /// In case of progressive files, this may actually start processing.
     ///
     /// ## Panics
     ///
     /// It may panic, like all functions of this library.
-    pub fn finish_compress(&mut self) {
+    #[inline]
+    pub fn finish(mut self) -> io::Result<W> {
         unsafe {
-            ffi::jpeg_finish_compress(&mut self.cinfo);
+            ffi::jpeg_finish_compress(&mut self.compress.cinfo);
         }
+        if self.outbuffer.0.is_null() || 0 == self.outbuffer.1 {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+        let data = unsafe {
+            slice::from_raw_parts(self.outbuffer.0, self.outbuffer.1 as usize)
+        };
+        self.writer.write_all(data)?;
+        drop(self.compress); // be sure the outbuffer isn't destroyed too soon
+        Ok(self.writer)
     }
 
-    /// If `set_mem_dest()` was enabled, this is the result
-    pub fn data_as_mut_slice(&mut self) -> Result<&[u8], ()> {
-        if self.outbuffer.is_null() || 0 == self.outsize {
-            return Err(());
-        }
-        unsafe {
-            Ok(slice::from_raw_parts(self.outbuffer, self.outsize as usize))
-        }
+    #[doc(hidden)]
+    #[deprecated(note = "use finish(); it now returns a writer given to start_compress()")]
+    pub fn finish_compress(self) -> io::Result<W> {
+        self.finish()
     }
 
-    /// If `set_mem_dest()` was enabled, this is the result. Can be called once only.
-    pub fn data_to_vec(&mut self) -> Result<Vec<u8>, ()> {
-        if self.outbuffer.is_null() || 0 == self.outsize {
-            return Err(());
-        }
-        unsafe {
-            let slice = slice::from_raw_parts(self.outbuffer, self.outsize as usize);
-            let mut vec = Vec::new();
-            let res = vec.try_reserve(slice.len());
-            if res.is_ok() {
-                vec.extend_from_slice(slice);
-            }
-            self.free_mem_dest();
-            res.map_err(drop).map(|_| vec)
-        }
+    /// Give up writing, return incomplete result
+    #[cold]
+    pub fn abort(self) -> W {
+        self.writer
     }
 }
 
 impl Drop for Compress {
+    #[inline]
     fn drop(&mut self) {
-        self.free_mem_dest();
         unsafe {
             ffi::jpeg_destroy_compress(&mut self.cinfo);
         }
@@ -446,8 +451,6 @@ fn write_mem() {
 
     cinfo.set_quality(88.);
 
-    cinfo.set_mem_dest();
-
     cinfo.set_chroma_sampling_pixel_sizes((1,1), (1,1));
     for c in cinfo.components().iter() {
         assert_eq!(c.v_samp_factor, 1);
@@ -460,7 +463,7 @@ fn write_mem() {
         assert_eq!(c.h_samp_factor, samp);
     }
 
-    cinfo.start_compress();
+    let mut cinfo = cinfo.start_compress(Vec::new()).unwrap();
 
     cinfo.write_marker(Marker::APP(2), "Hello World".as_bytes());
 
@@ -479,9 +482,7 @@ fn write_mem() {
 
     assert!(cinfo.write_raw_data(&bitmaps.iter().map(|c| &c[..]).collect::<Vec<_>>()));
 
-    cinfo.finish_compress();
-
-    cinfo.data_to_vec().unwrap();
+    cinfo.finish().unwrap();
 }
 
 #[test]
@@ -493,13 +494,11 @@ fn convert_colorspace() {
     cinfo.set_size(33, 15);
     cinfo.set_quality(44.);
 
-    cinfo.set_mem_dest();
-    cinfo.start_compress();
+    let mut cinfo = cinfo.start_compress(Vec::new()).unwrap();
 
     let scanlines = vec![127u8; 33*15*3];
-    assert!(cinfo.write_scanlines(&scanlines));
+    cinfo.write_scanlines(&scanlines).unwrap();
 
-    cinfo.finish_compress();
-
-    cinfo.data_to_vec().unwrap();
+    let res = cinfo.finish().unwrap();
+    assert!(res.len() > 0);
 }

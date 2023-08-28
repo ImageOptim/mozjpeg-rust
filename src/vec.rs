@@ -6,7 +6,7 @@ pub trait VecUninitExtender {
 impl<T: Copy> VecUninitExtender for Vec<T> {
     unsafe fn extend_uninit(&mut self, items: usize) {
         let new_len = self.len() + items;
-        self.try_reserve(items).expect("oom");
+        self.try_reserve_exact(items).expect("oom");
         debug_assert!(self.capacity() >= new_len);
         self.set_len(new_len);
     }

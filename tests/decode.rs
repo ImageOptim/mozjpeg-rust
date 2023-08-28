@@ -58,7 +58,7 @@ fn decode_test_rgb_flat() {
     assert_eq!(ColorSpace::JCS_RGB, image.color_space());
 
     let buf_size = image.min_flat_buffer_size();
-    let buf = image.read_scanlines_flat().unwrap();
+    let buf = image.read_scanlines::<u8>().unwrap();
 
     assert_eq!(buf.len(), buf_size);
 }
@@ -81,7 +81,7 @@ fn decode_test_rgba_flat() {
     assert_eq!(ColorSpace::JCS_EXT_RGBA, image.color_space());
 
     let buf_size = image.min_flat_buffer_size();
-    let buf = image.read_scanlines_flat().unwrap();
+    let buf = image.read_scanlines::<u8>().unwrap();
     assert_eq!(buf.len(), buf_size);
 }
 

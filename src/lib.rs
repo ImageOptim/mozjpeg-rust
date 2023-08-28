@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 #![allow(unused_attributes)]
 #![allow(unused_imports)]
 
@@ -81,20 +83,16 @@ fn recompress() {
         cinfo.set_luma_qtable(&qtable::AnnexK_Luma.scaled(99. * scale.0, 90. * scale.1));
         cinfo.set_chroma_qtable(&qtable::AnnexK_Chroma.scaled(100. * scale.0, 60. * scale.1));
 
-        cinfo.set_mem_dest();
-
         for (c, samp) in cinfo.components_mut().iter_mut().zip(samp_factors) {
             c.v_samp_factor = *samp;
             c.h_samp_factor = *samp;
         }
 
-        cinfo.start_compress();
+        let mut cinfo = cinfo.start_compress(Vec::new()).unwrap();
 
         assert!(cinfo.write_raw_data(&bitmaps.iter().map(|c| &c[..]).collect::<Vec<_>>()));
 
-        cinfo.finish_compress();
-
-        return cinfo.data_to_vec().unwrap();
+        cinfo.finish().unwrap()
     }
 
     let data1 = &write_jpeg(&bitmaps, &samp_factors, (1., 1.));

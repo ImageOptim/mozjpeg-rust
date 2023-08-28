@@ -481,91 +481,70 @@ impl<R> DecompressStarted<R> {
     }
 
     /// Supports any pixel type that is marked as "plain old data", see bytemuck crate.
-    /// `[u8; 3]` and `rgb::RGB8` are fine, for example.
-    #[track_caller]
-    pub fn read_scanlines<T: rgb::Pod>(&mut self) -> Option<Vec<T>> {
+    ///
+    /// Pixels can either have number of bytes matching number of channels, e.g. RGB as
+    /// `[u8; 3]` or `rgb::RGB8`, or be an amorphous blob of `u8`s.
+    pub fn read_scanlines<T: rgb::Pod>(&mut self) -> io::Result<Vec<T>> {
         let num_components = self.color_space().num_components();
-        assert_eq!(num_components, mem::size_of::<T>());
+        if num_components != mem::size_of::<T>() && mem::size_of::<T>() != 1 {
+            return Err(io::Error::new(io::ErrorKind::Unsupported, format!("pixel size must have {num_components} bytes, but has {}", mem::size_of::<T>())));
+        }
         let width = self.width();
         let height = self.height();
         let mut image_dst: Vec<T> = Vec::new();
-        image_dst.try_reserve_exact(height * width).ok()?;
-        unsafe { image_dst.extend_uninit(height * width); }
-        if self.read_scanlines_into(&mut image_dst) {
-            Some(image_dst)
-        } else {
-            None
-        }
+        let required_len = height * width * (num_components / mem::size_of::<T>());
+        image_dst.try_reserve_exact(required_len).map_err(|_| io::ErrorKind::OutOfMemory)?;
+        unsafe { image_dst.extend_uninit(required_len); }
+        self.read_scanlines_into(&mut image_dst)?;
+        Ok(image_dst)
     }
 
     /// Supports any pixel type that is marked as "plain old data", see bytemuck crate.
-    /// `[u8; 3]` and `rgb::RGB8` are fine, for example.
+    /// `[u8; 3]` and `rgb::RGB8` are fine, for example. `[u8]` is allowed for any pixel type.
+    ///
     /// Allocation-less version of `read_scanlines`
-    /// Returns true on success
-    #[track_caller]
-    pub fn read_scanlines_into<T: rgb::Pod>(&mut self, dest: &mut [T]) -> bool {
+    pub fn read_scanlines_into<'dest, T: rgb::Pod>(&mut self, dest: &'dest mut [T]) -> io::Result<&'dest mut [T]> {
         let num_components = self.color_space().num_components();
-        assert_eq!(num_components, mem::size_of::<T>());
-        let width = self.width();
-        let height = self.height();
-        assert_eq!(height * width, dest.len());
-        unsafe {
-            while self.can_read_more_scanlines() {
-                let start_line = self.dec.cinfo.output_scanline as usize;
-                let rest: &mut [T] = &mut dest[width * start_line..];
-                let rows = (&mut rest.as_mut_ptr()) as *mut *mut T;
-
-                let rows_read = ffi::jpeg_read_scanlines(&mut self.dec.cinfo, rows as *mut *mut u8, 1) as usize;
-                debug_assert_eq!(start_line + rows_read, self.dec.cinfo.output_scanline as usize, "wat {}/{} at {}", rows_read, height, start_line);
-
-                if 0 == rows_read {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
-    /// Reads the whole image scanline by scanline & returning a RGB(A)RGB(A)... flat buffer.
-    /// Those kinds of buffers are more friendly with the `image` crate
-    /// Returns Some(buffer) on success
-    pub fn read_scanlines_flat(&mut self) -> Option<Vec<u8>> {
-        let num_components = self.color_space().num_components();
-        let width = self.width();
-        let height = self.height();
-        let mut buf = vec![0; height * width * num_components];
-        if self.read_scanlines_flat_into(&mut buf) {
-            Some(buf)
+        let item_size = if mem::size_of::<T>() == 1 {
+            num_components
+        } else if num_components == mem::size_of::<T>() {
+            1
         } else {
-            None
-        }
-    }
-
-    /// Reads the whole image scanline by scanline into a RGB(A)RGB(A)... flat buffer.
-    /// Those kinds of buffers are more friendly with the `image` crate
-    /// Returns true on success
-    pub fn read_scanlines_flat_into(&mut self, dest: &mut [u8]) -> bool {
-        let num_components = self.color_space().num_components();
+            return Err(io::Error::new(io::ErrorKind::Unsupported, format!("pixel size must have {num_components} bytes, but has {}", mem::size_of::<T>())));
+        };
         let width = self.width();
         let height = self.height();
-        assert_eq!(height * width * num_components, dest.len());
-        let scanline_len = width * num_components;
-        unsafe {
-            while self.can_read_more_scanlines() {
-                let start_line = self.dec.cinfo.output_scanline as usize;
-                let start_idx = start_line * scanline_len;
-                let rest: &mut [u8] = &mut dest[start_idx..start_idx + scanline_len];
-                let rows = (&mut rest.as_mut_ptr()) as *mut *mut u8;
-
+        let line_width = width * item_size;
+        if dest.len() % line_width != 0 {
+            return Err(io::Error::new(io::ErrorKind::Unsupported, format!("destination slice length must be multiple of {width}x{num_components} bytes long, got {}B", dest.len() * mem::size_of::<T>())));
+        }
+        for row in dest.chunks_exact_mut(line_width) {
+            if !self.can_read_more_scanlines() {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+            let start_line = self.dec.cinfo.output_scanline as usize;
+            let rows = (&mut row.as_mut_ptr()) as *mut *mut T;
+            unsafe {
                 let rows_read = ffi::jpeg_read_scanlines(&mut self.dec.cinfo, rows as *mut *mut u8, 1) as usize;
-                debug_assert_eq!(start_line + rows_read, self.dec.cinfo.output_scanline as usize, "wat {}/{} at {}", rows_read, height, start_line);
-
+                debug_assert_eq!(start_line + rows_read, self.dec.cinfo.output_scanline as usize, "{start_line}+{rows_read} != {} of {height}", self.dec.cinfo.output_scanline);
                 if 0 == rows_read {
-                    return false;
+                    return Err(io::ErrorKind::UnexpectedEof.into());
                 }
             }
         }
-        true
+        Ok(dest)
+    }
+
+    #[deprecated(note = "use read_scanlines::<u8>")]
+    #[doc(hidden)]
+    pub fn read_scanlines_flat(&mut self) -> io::Result<Vec<u8>> {
+        self.read_scanlines()
+    }
+
+    #[deprecated(note = "use read_scanlines_into::<u8>")]
+    #[doc(hidden)]
+    pub fn read_scanlines_flat_into<'dest>(&mut self, dest: &'dest mut [u8]) -> io::Result<&'dest mut [u8]> {
+        self.read_scanlines_into(dest)
     }
 
     pub fn components(&self) -> &[CompInfo] {

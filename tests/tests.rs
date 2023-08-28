@@ -37,7 +37,6 @@ fn roundtrip() {
 fn encode_subsampled_jpeg((width, height, data): (usize, usize, Vec<[u8; 3]>)) -> Vec<u8> {
 
     let mut encoder = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
-    encoder.set_mem_dest();
     encoder.set_size(width, height);
 
     encoder.set_color_space(mozjpeg::ColorSpace::JCS_YCbCr);
@@ -54,11 +53,9 @@ fn encode_subsampled_jpeg((width, height, data): (usize, usize, Vec<[u8; 3]>)) -
         comp[2].v_samp_factor = v;
     }
 
-    encoder.start_compress();
+    let mut encoder = encoder.start_compress(Vec::new()).unwrap();
     let _ = encoder.write_scanlines(bytemuck::cast_slice(&data));
-    encoder.finish_compress();
-
-    encoder.data_to_vec().unwrap()
+    encoder.finish().unwrap()
 }
 
 fn decode_jpeg(buffer: &[u8]) -> (usize, usize, Vec<[u8; 3]>) {

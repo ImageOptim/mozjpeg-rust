@@ -24,15 +24,13 @@ fn color_jpeg() {
 
         comp.set_scan_optimization_mode(mozjpeg::ScanMode::AllComponentsTogether);
         comp.set_size(size, size);
-        comp.set_mem_dest();
-        comp.start_compress();
+        let mut comp = comp.start_compress(Vec::new()).unwrap();
 
         let lines = vec![128; size * size * 3];
-        assert!(comp.write_scanlines(&lines[..]));
+        comp.write_scanlines(&lines[..]).unwrap();
 
-        comp.finish_compress();
-        let jpeg = comp.data_to_vec().unwrap();
-
+        let jpeg = comp.finish().unwrap();
+        assert!(jpeg.len() > 0);
         decompress_jpeg(&jpeg);
     }
 }
@@ -47,17 +45,15 @@ fn raw_jpeg() {
         comp.set_raw_data_in(true);
         comp.set_size(size, size);
 
-        comp.set_mem_dest();
-        comp.start_compress();
+        let mut comp = comp.start_compress(Vec::new()).unwrap();
 
         let rounded_size = (size + 7) / 8 * 8;
         let t = vec![128; rounded_size * rounded_size];
         let components = vec![&t[..], &t[..], &t[..]];
         comp.write_raw_data(&components[..]);
 
-        comp.finish_compress();
-        let jpeg = comp.data_to_vec().unwrap();
-
+        let jpeg = comp.finish().unwrap();
+        assert!(jpeg.len() > 0);
         decompress_jpeg(&jpeg);
     }
 }

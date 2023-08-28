@@ -127,6 +127,9 @@ impl<R: BufRead> SourceMgr<R> {
     }
 
     unsafe extern "C-unwind" fn term_source(cinfo: &mut jpeg_decompress_struct) {
+        // unfortunately libjpeg is not diligent about updating bytes_in_buffer,
+        // so there's no point calling final consume() here, the bufreader may have read too much
+        // and can't be returned to caller
         let _ = Self::cast(cinfo); // checks
         cinfo.src = ptr::null_mut();
     }

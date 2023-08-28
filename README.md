@@ -11,44 +11,42 @@ In crates compiled with `panic=abort` setting, any JPEG error will abort the pro
 ## Decoding example
 
 ```rust
-std::panic::catch_unwind(|| {
+std::panic::catch_unwind(|| -> std::io::Result<Vec<rgb::RGB8>> {
     let d = mozjpeg::Decompress::with_markers(mozjpeg::ALL_MARKERS)
         .from_path("tests/test.jpg")?;
 
     d.width(); // FYI
     d.height();
     d.color_space() == mozjpeg::ColorSpace::JCS_YCbCr;
-    for marker in d.markers() {}
+    for marker in d.markers() { /* read metadata or color profiles */ }
 
-    // rgb() enables conversiono
-    let image = d.rgb()?;
+    // rgb() enables conversion
+    let mut image = d.rgb()?;
     image.width();
     image.height();
     image.color_space() == mozjpeg::ColorSpace::JCS_RGB;
 
     let pixels = image.read_scanlines()?;
-    assert!(image.finish_decompress());
-    Ok(())
-})?;
+    image.finish()?;
+    Ok(pixels)
+});
 ```
 
 ## Encoding example
 
 ```rust
-std::panic::catch_unwind(|| {
+# let width = 8; let height = 8;
+std::panic::catch_unwind(|| -> std::io::Result<Vec<u8>> {
     let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
 
     comp.set_size(width, height);
-    comp.set_mem_dest();
-    comp.start_compress();
+    let mut comp = comp.start_compress(Vec::new())?; // any io::Write will work
 
     // replace with your image data
-    let pixels = vec![0; width * height * 3];
-    assert!(comp.write_scanlines(&pixels[..]));
+    let pixels = vec![0u8; width * height * 3];
+    comp.write_scanlines(&pixels[..])?;
 
-    comp.finish_compress();
-    let jpeg_bytes = comp.data_to_vec()?;
-    // write to file, etc.
-    Ok(())
-})?;
+    let writer = comp.finish()?;
+    Ok(writer)
+});
 ```
