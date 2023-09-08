@@ -551,6 +551,8 @@ impl<R> DecompressStarted<R> {
         self.dec.components()
     }
 
+    #[deprecated(note = "too late to mutate, use components()")]
+    #[doc(hidden)]
     pub fn components_mut(&mut self) -> &[CompInfo] {
         self.dec.components_mut()
     }
