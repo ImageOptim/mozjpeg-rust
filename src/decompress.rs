@@ -258,11 +258,12 @@ impl<R> Decompress<R> {
     /// Result here is mostly useless, because it will panic if the file is invalid
     #[inline]
     fn read_header(&mut self) -> io::Result<()> {
+        // require_image = 0 allows handling this error without unwinding
         let res = unsafe { ffi::jpeg_read_header(&mut self.cinfo, 0) };
-        if res == 1 || res == 2 {
+        if res == 1 {
             Ok(())
         } else {
-            Err(io::Error::new(io::ErrorKind::Other, format!("JPEG err {}", res)))
+            Err(io::Error::new(io::ErrorKind::Other, "no image in the JPEG file"))
         }
     }
 
