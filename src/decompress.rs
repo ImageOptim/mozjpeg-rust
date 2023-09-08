@@ -128,7 +128,7 @@ impl<'markers> DecompressBuilder<'markers> {
 pub struct Decompress<R> {
     cinfo: jpeg_decompress_struct,
     err_mgr: Box<ErrorMgr>,
-    src_mgr: Box<SourceMgr<R>>,
+    src_mgr: Option<Box<SourceMgr<R>>>,
 }
 
 /// Marker type and data slice returned by `MarkerIter`
@@ -225,12 +225,14 @@ impl<R> Decompress<R> {
         unsafe {
             let mut newself = Decompress {
                 cinfo: mem::zeroed(),
-                src_mgr,
+                src_mgr: Some(src_mgr),
                 err_mgr,
             };
-            newself.cinfo.common.err = addr_of_mut!(*newself.err_mgr);
+            let src_ptr = addr_of_mut!(newself.src_mgr.as_mut().unwrap().iface);
+            let err_ptr = addr_of_mut!(*newself.err_mgr);
+            newself.cinfo.common.err = err_ptr;
             ffi::jpeg_create_decompress(&mut newself.cinfo);
-            newself.cinfo.src = addr_of_mut!(newself.src_mgr.iface);
+            newself.cinfo.src = src_ptr;
             for &marker in builder.save_markers {
                 newself.save_marker(marker);
             }
@@ -559,11 +561,24 @@ impl<R> DecompressStarted<R> {
 
     #[deprecated(note = "use finish()")]
     #[doc(hidden)]
-    pub fn finish_decompress(self) -> bool {
-        self.finish().is_ok()
+    pub fn finish_decompress(mut self) -> bool {
+        self.finish_internal().is_ok()
     }
 
+    /// Finish decompress and return the reader
+    pub fn finish_into_inner(mut self) -> io::Result<R> where R: BufRead {
+        self.finish_internal()?;
+        self.dec.cinfo.src = ptr::null_mut();
+        let mgr = self.dec.src_mgr.take().ok_or_else(|| io::ErrorKind::Other)?;
+        Ok(mgr.into_inner())
+    }
+    #[inline]
     pub fn finish(mut self) -> io::Result<()> {
+        self.finish_internal()
+    }
+
+    #[inline]
+    fn finish_internal(&mut self) -> io::Result<()> {
         if 0 != unsafe { ffi::jpeg_finish_decompress(&mut self.dec.cinfo) } {
             Ok(())
         } else {
