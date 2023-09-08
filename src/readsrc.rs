@@ -60,6 +60,8 @@ impl<R: BufRead> SourceMgr<R> {
 
     #[cold]
     fn set_buffer_to_eoi(&mut self) {
+        debug_assert_eq!(self.to_consume, 0); // this should happen at eof
+
         // libjpeg doesn't treat it as error, but fakes it!
         self.iface.next_input_byte = [0xFF, 0xD9, 0xFF, 0xD9].as_ptr();
         self.iface.bytes_in_buffer = 4;
@@ -67,15 +69,18 @@ impl<R: BufRead> SourceMgr<R> {
 
     #[inline(never)]
     fn fill_input_buffer_impl(&mut self) -> io::Result<()> {
+        // Do not call return_unconsumed_data() here.
         // here bytes_in_buffer may be != 0, because jdhuff.c doesn't update
         // the value after consuming the buffer.
 
         self.reader.consume(self.to_consume);
+        self.to_consume = 0;
+
         let buf = self.reader.fill_buf()?;
+        self.to_consume = buf.len();
 
         self.iface.next_input_byte = buf.as_ptr();
-        self.iface.bytes_in_buffer = buf.len() as _;
-        self.to_consume = buf.len();
+        self.iface.bytes_in_buffer = buf.len();
 
         if buf.is_empty() {
             // this is EOF
@@ -103,6 +108,7 @@ impl<R: BufRead> SourceMgr<R> {
         }
     }
 
+    /// libjpeg makes bytes_in_buffer up to date before calling this
     unsafe extern "C-unwind" fn skip_input_data(cinfo: &mut jpeg_decompress_struct, num_bytes: c_long) {
         if num_bytes <= 0 {
             return;
@@ -126,11 +132,22 @@ impl<R: BufRead> SourceMgr<R> {
         }
     }
 
+    fn return_unconsumed_data(&mut self) {
+        let unconsumed = self.to_consume.saturating_sub(self.iface.bytes_in_buffer);
+        self.to_consume = 0;
+        self.reader.consume(unconsumed);
+    }
+
+    /// jpeg_finish_decompress consumes data up to EOI before calling this
     unsafe extern "C-unwind" fn term_source(cinfo: &mut jpeg_decompress_struct) {
-        // unfortunately libjpeg is not diligent about updating bytes_in_buffer,
-        // so there's no point calling final consume() here, the bufreader may have read too much
-        // and can't be returned to caller
-        let _ = Self::cast(cinfo); // checks
-        cinfo.src = ptr::null_mut();
+        let this = Self::cast(cinfo);
+        this.return_unconsumed_data();
+    }
+
+    /// This will have the buffer in valid state only if libjpeg stopped decoding
+    /// at an end of a marker, or jpeg_consume_input has been called.
+    pub fn into_inner(mut self) -> R {
+        self.return_unconsumed_data();
+        self.reader
     }
 }
