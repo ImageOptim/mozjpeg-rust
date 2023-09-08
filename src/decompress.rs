@@ -610,9 +610,14 @@ fn read_incomplete_file() {
     let data = std::fs::read("tests/test.jpg").unwrap();
     assert_eq!(2169, data.len());
 
-    let dinfo = Decompress::new_mem(&data[..data.len()/2]).unwrap();
-    let mut dinfo = dinfo.rgb().unwrap();
-    let _bitmap: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
+    // the reader fakes EOI marker, so it always succeeds!
+    for l in [data.len()/2, data.len()/3, data.len()/4, data.len()-4, data.len()-3, data.len()-2, data.len()-1] {
+        let dinfo = Decompress::new_mem(&data[..l]).unwrap();
+        let mut dinfo = dinfo.rgb().unwrap();
+        let _bitmap: Vec<[u8; 3]> = dinfo.read_scanlines().unwrap();
+        let remaining = dinfo.finish_into_inner().unwrap();
+        assert_eq!(0, remaining.len());
+    }
 }
 
 #[test]
@@ -686,6 +691,45 @@ fn no_markers() {
 
     let dinfo = Decompress::builder().with_markers(&[]).from_path("tests/test.jpg").unwrap();
     assert_eq!(0, dinfo.markers().count());
+}
+
+#[test]
+fn buffer_into_inner() {
+    use std::io::Read;
+
+    let data = std::fs::read("tests/test.jpg").unwrap();
+    let orig_data_len = data.len();
+
+    let dec = Decompress::builder()
+        .from_reader(BufReader::with_capacity(data.len()/17, std::io::Cursor::new(data)))
+        .unwrap();
+    let mut dec = dec.rgb().unwrap();
+    let _: Vec<[u8; 3]> = dec.read_scanlines().unwrap();
+    let mut buf = dec.finish_into_inner().unwrap();
+    assert_eq!(0, buf.fill_buf().unwrap().len());
+
+    let mut data = buf.into_inner().into_inner();
+    assert_eq!(orig_data_len, data.len());
+
+    // put two images in one vec
+    data.extend_from_slice(b"unexpected data after first image eoi");
+    data.append(&mut data.clone());
+    let appended_len = data.len() - orig_data_len;
+
+    // read one image
+    let dec = Decompress::builder()
+        .from_reader(BufReader::with_capacity(data.len()/21, std::io::Cursor::new(data)))
+        .unwrap();
+    let mut dec = dec.rgb().unwrap();
+    let _: Vec<[u8; 3]> = dec.read_scanlines().unwrap();
+
+    // expect buf to have the other one
+    let mut buf = dec.finish_into_inner().unwrap();
+    let mut tmp = Vec::new();
+    buf.read_to_end(&mut tmp).unwrap();
+    let data = buf.into_inner().into_inner();
+    assert_eq!(appended_len, tmp.len());
+    assert_eq!(data[orig_data_len..], tmp);
 }
 
 #[test]
