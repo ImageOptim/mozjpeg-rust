@@ -4,7 +4,7 @@ categories = ["multimedia::images"]
 description = "Higher-level wrapper for Mozilla's JPEG library"
 documentation = "https://docs.rs/mozjpeg"
 homepage = "https://lib.rs/mozjpeg"
-include = ["/README.md", "/Cargo.toml", "/src/*.rs"]
+include = ["/README.md", "/Cargo.toml", "/src/*.rs", "LICENSE"]
 keywords = ["jpeg", "libjpeg", "image", "encoder", "decoder"]
 license = "IJG"
 name = "mozjpeg"
@@ -16,7 +16,7 @@ rust-version = "1.71"
 
 [dependencies]
 libc = "0.2.126"
-mozjpeg-sys = { version = "2.0", default-features = false, features = ["unwinding"] }
+mozjpeg-sys = { version = "2.0.1", default-features = false, features = ["unwinding"] }
 rgb = { version = "0.8.32", features = ["as-bytes"] }
 arrayvec = "0.7.2"
 
