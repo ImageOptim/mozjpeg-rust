@@ -406,7 +406,11 @@ impl<W: io::Write> CompressStarted<W> {
             slice::from_raw_parts(self.outbuffer.0, self.outbuffer.1 as usize)
         };
         self.writer.write_all(data)?;
-        drop(self.compress); // be sure the outbuffer isn't destroyed too soon
+        unsafe {
+            libc::free(self.outbuffer.0.cast());
+            self.outbuffer.0 = ptr::null_mut();
+        }
+        drop(self.compress);
         Ok(self.writer)
     }
 
