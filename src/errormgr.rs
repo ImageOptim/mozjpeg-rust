@@ -1,5 +1,5 @@
-use crate::ffi::jpeg_common_struct;
 use crate::ffi;
+use crate::ffi::jpeg_common_struct;
 use std::borrow::Cow;
 use std::mem;
 use std::os::raw::c_int;
@@ -53,4 +53,3 @@ extern "C-unwind" fn unwind_error_exit(cinfo: &mut jpeg_common_struct) {
     // avoids calling panic handler
     std::panic::resume_unwind(Box::new(msg));
 }
-

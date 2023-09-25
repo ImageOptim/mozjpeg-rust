@@ -1,5 +1,4 @@
 #![doc = include_str!("../README.md")]
-
 #![allow(unused_attributes)]
 #![allow(unused_imports)]
 
@@ -38,8 +37,8 @@ mod errormgr;
 mod marker;
 /// Quantization table presets from MozJPEG
 pub mod qtable;
-mod vec;
 mod readsrc;
+mod vec;
 mod writedst;
 
 #[test]

@@ -1,6 +1,6 @@
-use crate::qtable::QTable;
-use crate::ffi::DCTSIZE;
 pub use crate::ffi::jpeg_component_info as CompInfo;
+use crate::ffi::DCTSIZE;
+use crate::qtable::QTable;
 
 pub trait CompInfoExt {
     /// Number of pixels per row, including padding to MCU
@@ -23,12 +23,10 @@ pub trait CompInfoExt {
 
 impl CompInfoExt for CompInfo {
     fn qtable(&self) -> Option<QTable> {
-        unsafe {self.quant_table.as_ref()}.map(|q_in| {
-            let mut qtable = QTable {
-                coeffs: [0; 64],
-            };
+        unsafe { self.quant_table.as_ref() }.map(|q_in| {
+            let mut qtable = QTable { coeffs: [0; 64] };
             for (out, q) in qtable.coeffs.iter_mut().zip(q_in.quantval.iter()) {
-                *out = *q as u32;
+                *out = u32::from(*q);
             }
             qtable
         })

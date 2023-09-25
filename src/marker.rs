@@ -19,11 +19,11 @@ impl From<u8> for Marker {
     }
 }
 
-impl Into<c_int> for Marker {
-    fn into(self) -> c_int {
-        match self {
-            Self::APP(n) => c_int::from(n) + crate::ffi::jpeg_marker::APP0 as c_int,
-            Self::COM => crate::ffi::jpeg_marker::COM as c_int,
+impl From<Marker> for c_int {
+    fn from(val: Marker) -> Self {
+        match val {
+            Marker::APP(n) => c_int::from(n) + crate::ffi::jpeg_marker::APP0 as c_int,
+            Marker::COM => crate::ffi::jpeg_marker::COM as c_int,
         }
     }
 }

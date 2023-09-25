@@ -14,7 +14,7 @@ pub fn decompress_jpeg(jpeg: &[u8]) -> Vec<Vec<u8>> {
         decomp.finish().unwrap();
     }
 
-    return bitmaps;
+    bitmaps
 }
 
 #[test]
@@ -30,7 +30,7 @@ fn color_jpeg() {
         comp.write_scanlines(&lines[..]).unwrap();
 
         let jpeg = comp.finish().unwrap();
-        assert!(jpeg.len() > 0);
+        assert!(!jpeg.is_empty());
         decompress_jpeg(&jpeg);
     }
 }
@@ -53,7 +53,7 @@ fn raw_jpeg() {
         comp.write_raw_data(&components[..]);
 
         let jpeg = comp.finish().unwrap();
-        assert!(jpeg.len() > 0);
+        assert!(!jpeg.is_empty());
         decompress_jpeg(&jpeg);
     }
 }

@@ -1,4 +1,3 @@
-
 pub trait VecUninitExtender {
     unsafe fn extend_uninit(&mut self, items: usize);
 }

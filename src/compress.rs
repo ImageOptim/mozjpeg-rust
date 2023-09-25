@@ -2,8 +2,8 @@ use crate::colorspace::ColorSpace;
 use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
 use crate::component::CompInfoExt;
-use crate::errormgr::ErrorMgr;
 use crate::errormgr::unwinding_error_mgr;
+use crate::errormgr::ErrorMgr;
 use crate::ffi;
 use crate::ffi::boolean;
 use crate::ffi::jpeg_compress_struct;
@@ -14,11 +14,11 @@ use crate::ffi::J_BOOLEAN_PARAM;
 use crate::ffi::J_INT_PARAM;
 use crate::marker::Marker;
 use crate::qtable::QTable;
-use arrayvec::ArrayVec;
 use crate::writedst::DestinationMgr;
+use arrayvec::ArrayVec;
 use std::cmp::min;
-use std::mem;
 use std::io;
+use std::mem;
 use std::os::raw::{c_int, c_uchar, c_uint, c_ulong, c_void};
 use std::ptr;
 use std::ptr::addr_of_mut;
@@ -56,6 +56,7 @@ impl Compress {
     ///
     /// By default errors cause unwind (panic) and unwind through the C code,
     /// which strictly speaking is not guaranteed to work in Rust (but seems to work fine, at least on x86-64 and ARM).
+    #[must_use]
     pub fn new(color_space: ColorSpace) -> Compress {
         Compress::new_err(unwinding_error_mgr(), color_space)
     }
@@ -66,6 +67,7 @@ impl Compress {
     /// it can't gracefully return due to the design of libjpeg.
     ///
     /// `color_space` refers to input color space
+    #[must_use]
     pub fn new_err(err: Box<ErrorMgr>, color_space: ColorSpace) -> Compress {
         unsafe {
             let mut newself = Compress {
@@ -74,7 +76,7 @@ impl Compress {
             };
             newself.cinfo.common.err = addr_of_mut!(*newself.own_err);
 
-            let s = mem::size_of_val(&newself.cinfo) as usize;
+            let s = mem::size_of_val(&newself.cinfo);
             ffi::jpeg_CreateCompress(&mut newself.cinfo, JPEG_LIB_VERSION, s);
 
             newself.cinfo.in_color_space = color_space;
@@ -140,7 +142,6 @@ impl<W> CompressStarted<W> {
         self.compress.components()
     }
 
-
     fn can_write_more_lines(&self) -> bool {
         self.compress.cinfo.next_scanline < self.compress.cinfo.image_height
     }
@@ -155,13 +156,14 @@ impl Compress {
     }
 
     /// Read-only view of component information
+    #[must_use]
     pub fn components(&self) -> &[CompInfo] {
         unsafe { slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize) }
     }
 }
 
 impl<W> CompressStarted<W> {
-    /// Returns Ok(()) if all lines in image_src (not necessarily all lines of the image) were written
+    /// Returns Ok(()) if all lines in `image_src` (not necessarily all lines of the image) were written
     ///
     /// ## Panics
     ///
@@ -501,5 +503,5 @@ fn convert_colorspace() {
     cinfo.write_scanlines(&scanlines).unwrap();
 
     let res = cinfo.finish().unwrap();
-    assert!(res.len() > 0);
+    assert!(!res.is_empty());
 }

@@ -1,27 +1,27 @@
 //! See the `Decompress` struct instead. You don't need to use this module directly.
-use std::io::BufRead;
-use std::io::BufReader;
-use crate::readsrc::SourceMgr;
+use crate::colorspace::ColorSpace;
+use crate::colorspace::ColorSpaceExt;
+use crate::component::CompInfo;
+use crate::component::CompInfoExt;
+use crate::errormgr::unwinding_error_mgr;
+use crate::errormgr::ErrorMgr;
 use crate::ffi;
 use crate::ffi::jpeg_decompress_struct;
 use crate::ffi::DCTSIZE;
 use crate::ffi::JPEG_LIB_VERSION;
 use crate::ffi::J_COLOR_SPACE as COLOR_SPACE;
-use std::os::raw::{c_int, c_uchar, c_ulong, c_void};
-use crate::colorspace::ColorSpace;
-use crate::colorspace::ColorSpaceExt;
-use crate::component::CompInfo;
-use crate::component::CompInfoExt;
-use crate::errormgr::ErrorMgr;
-use crate::errormgr::unwinding_error_mgr;
 use crate::marker::Marker;
+use crate::readsrc::SourceMgr;
 use crate::vec::VecUninitExtender;
 use libc::fdopen;
 use std::cmp::min;
 use std::fs::File;
 use std::io;
+use std::io::BufRead;
+use std::io::BufReader;
 use std::marker::PhantomData;
 use std::mem;
+use std::os::raw::{c_int, c_uchar, c_ulong, c_void};
 use std::path::Path;
 use std::ptr;
 use std::ptr::addr_of_mut;
@@ -71,6 +71,7 @@ pub use DecompressBuilder as DecompressConfig;
 
 impl<'markers> DecompressBuilder<'markers> {
     #[inline]
+    #[must_use]
     pub const fn new() -> Self {
         DecompressBuilder {
             err_mgr: None,
@@ -79,12 +80,14 @@ impl<'markers> DecompressBuilder<'markers> {
     }
 
     #[inline]
+    #[must_use]
     pub fn with_err(mut self, err: ErrorMgr) -> Self {
         self.err_mgr = Some(Box::new(err));
         self
     }
 
     #[inline]
+    #[must_use]
     pub const fn with_markers(mut self, save_markers: &'markers [Marker]) -> Self {
         self.save_markers = save_markers;
         self
@@ -165,6 +168,7 @@ impl Decompress<()> {
     /// Short for builder().with_err()
     #[inline]
     #[doc(hidden)]
+    #[must_use]
     pub fn with_err(err_mgr: ErrorMgr) -> DecompressBuilder<'static> {
         DecompressBuilder::new().with_err(err_mgr)
     }
@@ -172,6 +176,7 @@ impl Decompress<()> {
     /// Short for builder().with_markers()
     #[inline]
     #[doc(hidden)]
+    #[must_use]
     pub fn with_markers(markers: &[Marker]) -> DecompressBuilder<'_> {
         DecompressBuilder::new().with_markers(markers)
     }
@@ -179,12 +184,14 @@ impl Decompress<()> {
     /// Use builder()
     #[deprecated(note = "renamed to builder()")]
     #[doc(hidden)]
+    #[must_use]
     pub fn config() -> DecompressBuilder<'static> {
         DecompressBuilder::new()
     }
 
     /// This is `DecompressBuilder::new()`
     #[inline]
+    #[must_use]
     pub const fn builder() -> DecompressBuilder<'static> {
         DecompressBuilder::new()
     }
@@ -242,6 +249,7 @@ impl<R> Decompress<R> {
     }
 
     #[inline]
+    #[must_use]
     pub fn components(&self) -> &[CompInfo] {
         unsafe {
             slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize)
@@ -268,18 +276,21 @@ impl<R> Decompress<R> {
     }
 
     #[inline]
+    #[must_use]
     pub fn color_space(&self) -> COLOR_SPACE {
         self.cinfo.jpeg_color_space
     }
 
     /// It's generally bogus in libjpeg
     #[inline]
+    #[must_use]
     pub fn gamma(&self) -> f64 {
         self.cinfo.output_gamma
     }
 
     /// Markers are available only if you enable them via `with_markers()`
     #[inline]
+    #[must_use]
     pub fn markers(&self) -> MarkerIter<'_> {
         MarkerIter {
             marker_list: self.cinfo.marker_list,
@@ -296,16 +307,19 @@ impl<R> Decompress<R> {
 
     /// width,height
     #[inline]
+    #[must_use]
     pub fn size(&self) -> (usize, usize) {
         (self.width(), self.height())
     }
 
     #[inline]
+    #[must_use]
     pub fn width(&self) -> usize {
         self.cinfo.image_width as usize
     }
 
     #[inline]
+    #[must_use]
     pub fn height(&self) -> usize {
         self.cinfo.image_height as usize
     }
@@ -372,7 +386,7 @@ impl<R> Decompress<R> {
 
     /// Start decompression without colorspace conversion
     pub fn image(self) -> io::Result<Format<R>> {
-        use crate::ffi::J_COLOR_SPACE::*;
+        use crate::ffi::J_COLOR_SPACE::{JCS_CMYK, JCS_GRAYSCALE, JCS_RGB};
         match self.out_color_space() {
             JCS_RGB => Ok(Format::RGB(DecompressStarted::start_decompress(self)?)),
             JCS_CMYK => Ok(Format::CMYK(DecompressStarted::start_decompress(self)?)),
@@ -415,12 +429,14 @@ impl<R> DecompressStarted<R> {
         }
     }
 
+    #[must_use]
     pub fn color_space(&self) -> ColorSpace {
         self.dec.out_color_space()
     }
 
     /// Gets the minimal buffer size for using `DecompressStarted::read_scanlines_flat_into`
     #[inline(always)]
+    #[must_use]
     pub fn min_flat_buffer_size(&self) -> usize {
         self.color_space().num_components() * self.width() * self.height()
     }
@@ -461,7 +477,7 @@ impl<R> DecompressStarted<R> {
                 image_dest[ci].extend_uninit(comp_height * row_stride);
                 for ri in 0..comp_height {
                     let start = original_len + ri * row_stride;
-                    row_ptrs[ci][ri] = (&mut image_dest[ci][start.. start + row_stride]).as_mut_ptr();
+                    row_ptrs[ci][ri] = image_dest[ci][start..start + row_stride].as_mut_ptr();
                 }
                 for ri in comp_height..mcu_height {
                     row_ptrs[ci][ri] = ptr::null_mut();
@@ -475,10 +491,12 @@ impl<R> DecompressStarted<R> {
         }
     }
 
+    #[must_use]
     pub fn width(&self) -> usize {
         self.dec.cinfo.output_width as usize
     }
 
+    #[must_use]
     pub fn height(&self) -> usize {
         self.dec.cinfo.output_height as usize
     }
@@ -526,9 +544,10 @@ impl<R> DecompressStarted<R> {
                 return Err(io::ErrorKind::UnexpectedEof.into());
             }
             let start_line = self.dec.cinfo.output_scanline as usize;
-            let rows = (&mut row.as_mut_ptr()) as *mut *mut T;
+            let mut row_ptr = row.as_mut_ptr();
+            let rows = std::ptr::addr_of_mut!(row_ptr);
             unsafe {
-                let rows_read = ffi::jpeg_read_scanlines(&mut self.dec.cinfo, rows as *mut *mut u8, 1) as usize;
+                let rows_read = ffi::jpeg_read_scanlines(&mut self.dec.cinfo, rows.cast::<*mut u8>(), 1) as usize;
                 debug_assert_eq!(start_line + rows_read, self.dec.cinfo.output_scanline as usize, "{start_line}+{rows_read} != {} of {height}", self.dec.cinfo.output_scanline);
                 if 0 == rows_read {
                     return Err(io::ErrorKind::UnexpectedEof.into());
@@ -550,6 +569,7 @@ impl<R> DecompressStarted<R> {
         self.read_scanlines_into(dest)
     }
 
+    #[must_use]
     pub fn components(&self) -> &[CompInfo] {
         self.dec.components()
     }
@@ -562,6 +582,7 @@ impl<R> DecompressStarted<R> {
 
     #[deprecated(note = "use finish()")]
     #[doc(hidden)]
+    #[must_use]
     pub fn finish_decompress(mut self) -> bool {
         self.finish_internal().is_ok()
     }
@@ -570,7 +591,7 @@ impl<R> DecompressStarted<R> {
     pub fn finish_into_inner(mut self) -> io::Result<R> where R: BufRead {
         self.finish_internal()?;
         self.dec.cinfo.src = ptr::null_mut();
-        let mgr = self.dec.src_mgr.take().ok_or_else(|| io::ErrorKind::Other)?;
+        let mgr = self.dec.src_mgr.take().ok_or(io::ErrorKind::Other)?;
         Ok(mgr.into_inner())
     }
     #[inline]

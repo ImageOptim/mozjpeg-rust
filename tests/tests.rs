@@ -35,7 +35,6 @@ fn roundtrip() {
 }
 
 fn encode_subsampled_jpeg((width, height, data): (usize, usize, Vec<[u8; 3]>)) -> Vec<u8> {
-
     let mut encoder = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
     encoder.set_size(width, height);
 

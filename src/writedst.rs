@@ -2,13 +2,13 @@ use crate::boolean;
 use crate::fail;
 use crate::ffi::jpeg_compress_struct;
 use crate::warn;
+use mozjpeg_sys::jpeg_common_struct;
+use mozjpeg_sys::jpeg_destination_mgr;
 use mozjpeg_sys::JERR_BUFFER_SIZE;
 use mozjpeg_sys::JERR_FILE_WRITE;
 use mozjpeg_sys::JERR_INPUT_EOF;
-use mozjpeg_sys::J_MESSAGE_CODE;
-use mozjpeg_sys::jpeg_common_struct;
-use mozjpeg_sys::jpeg_destination_mgr;
 use mozjpeg_sys::JWRN_JPEG_EOF;
+use mozjpeg_sys::J_MESSAGE_CODE;
 use mozjpeg_sys::{JPOOL_IMAGE, JPOOL_PERMANENT};
 use std::io;
 use std::io::Write;
@@ -16,9 +16,8 @@ use std::mem::MaybeUninit;
 use std::os::raw::c_int;
 use std::os::raw::c_long;
 use std::os::raw::c_uint;
-use std::ptr::NonNull;
 use std::ptr;
-
+use std::ptr::NonNull;
 
 #[repr(C)]
 pub(crate) struct DestinationMgr<W> {

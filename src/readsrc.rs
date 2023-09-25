@@ -1,16 +1,16 @@
-use std::os::raw::c_void;
 use crate::{fail, warn};
-use mozjpeg_sys::JERR_BAD_LENGTH;
 use mozjpeg_sys::boolean;
 use mozjpeg_sys::jpeg_decompress_struct;
-use mozjpeg_sys::{JERR_VIRTUAL_BUG, JERR_FILE_READ};
+use mozjpeg_sys::JERR_BAD_LENGTH;
 use mozjpeg_sys::{jpeg_common_struct, jpeg_resync_to_restart, jpeg_source_mgr};
-use mozjpeg_sys::{JWRN_JPEG_EOF, JPOOL_IMAGE, JPOOL_PERMANENT};
-use std::io::{self, Read, BufRead, BufReader};
+use mozjpeg_sys::{JERR_FILE_READ, JERR_VIRTUAL_BUG};
+use mozjpeg_sys::{JPOOL_IMAGE, JPOOL_PERMANENT, JWRN_JPEG_EOF};
+use std::io::{self, BufRead, BufReader, Read};
 use std::mem::MaybeUninit;
+use std::os::raw::c_void;
 use std::os::raw::{c_int, c_long, c_uint};
-use std::ptr::NonNull;
 use std::ptr;
+use std::ptr::NonNull;
 
 #[repr(C)]
 pub(crate) struct SourceMgr<R> {
@@ -90,8 +90,8 @@ impl<R: BufRead> SourceMgr<R> {
     }
 
     /// In typical applications, it should read fresh data
-    ///    into the buffer (ignoring the current state of next_input_byte and
-    ///    bytes_in_buffer)
+    ///    into the buffer (ignoring the current state of `next_input_byte` and
+    ///    `bytes_in_buffer`)
     unsafe extern "C-unwind" fn fill_input_buffer(cinfo: &mut jpeg_decompress_struct) -> boolean {
         let this = Self::cast(cinfo);
         match this.fill_input_buffer_impl() {
@@ -108,7 +108,7 @@ impl<R: BufRead> SourceMgr<R> {
         }
     }
 
-    /// libjpeg makes bytes_in_buffer up to date before calling this
+    /// libjpeg makes `bytes_in_buffer` up to date before calling this
     unsafe extern "C-unwind" fn skip_input_data(cinfo: &mut jpeg_decompress_struct, num_bytes: c_long) {
         if num_bytes <= 0 {
             return;
@@ -138,14 +138,14 @@ impl<R: BufRead> SourceMgr<R> {
         self.reader.consume(unconsumed);
     }
 
-    /// jpeg_finish_decompress consumes data up to EOI before calling this
+    /// `jpeg_finish_decompress` consumes data up to EOI before calling this
     unsafe extern "C-unwind" fn term_source(cinfo: &mut jpeg_decompress_struct) {
         let this = Self::cast(cinfo);
         this.return_unconsumed_data();
     }
 
     /// This will have the buffer in valid state only if libjpeg stopped decoding
-    /// at an end of a marker, or jpeg_consume_input has been called.
+    /// at an end of a marker, or `jpeg_consume_input` has been called.
     pub fn into_inner(mut self) -> R {
         self.return_unconsumed_data();
         self.reader
