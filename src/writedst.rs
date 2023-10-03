@@ -43,6 +43,7 @@ impl<W: Write> DestinationMgr<W> {
         }
     }
 
+    /// Must be called after `term_destination`
     pub fn into_inner(self) -> W {
         self.writer
     }
@@ -54,9 +55,10 @@ impl<W: Write> DestinationMgr<W> {
         self.iface.free_in_buffer = spare_capacity.len();
     }
 
-    fn write_buffer(&mut self) -> Result<(), J_MESSAGE_CODE> {
-        let Some(used_capacity) = self.buf.spare_capacity_mut().len().checked_sub(self.iface.free_in_buffer) else {
-            return Err(JERR_BUFFER_SIZE);
+    unsafe fn write_buffer(&mut self, full: bool) -> Result<(), J_MESSAGE_CODE> {
+        let buf = self.buf.spare_capacity_mut();
+        let used_capacity = if full { buf.len() } else {
+            buf.len().checked_sub(self.iface.free_in_buffer).ok_or(JERR_BUFFER_SIZE)?
         };
         if used_capacity > 0 {
             unsafe {
@@ -79,9 +81,11 @@ impl<W: Write> DestinationMgr<W> {
         this
     }
 
+    /// This is called by `jcphuff`'s `dump_buffer()`, which does NOT keep
+    /// the position up to date, and expects full buffer write every time.
     unsafe extern "C-unwind" fn empty_output_buffer(cinfo: &mut jpeg_compress_struct) -> boolean {
         let this = Self::cast(cinfo);
-        if let Err(code) = this.write_buffer() {
+        if let Err(code) = this.write_buffer(true) {
             fail(&mut cinfo.common, code);
         }
         1
@@ -94,7 +98,7 @@ impl<W: Write> DestinationMgr<W> {
 
     unsafe extern "C-unwind" fn term_destination(cinfo: &mut jpeg_compress_struct) {
         let this = Self::cast(cinfo);
-        if let Err(code) = this.write_buffer() {
+        if let Err(code) = this.write_buffer(false) {
             fail(&mut cinfo.common, code);
         }
         if let Err(_) = this.writer.flush() {
@@ -106,6 +110,7 @@ impl<W: Write> DestinationMgr<W> {
 
 #[test]
 fn w() {
+    for any_write_first in [true, false] {
     for capacity in [0,1,2,3,5,10,255,256,4096] {
         let mut w = DestinationMgr::new(Vec::new(), capacity);
         let mut expected = Vec::new();
@@ -114,28 +119,30 @@ fn w() {
             j.dest = &mut w.iface;
             (w.iface.init_destination.unwrap())(&mut j);
             assert!(w.iface.free_in_buffer > 0);
-            (w.iface.empty_output_buffer.unwrap())(&mut j);
-            assert!(w.iface.free_in_buffer > 0);
-            expected.push(123);
-            *w.iface.next_output_byte = 123;
-            w.iface.next_output_byte = w.iface.next_output_byte.add(1);
-            w.iface.free_in_buffer -= 1;
-            (w.iface.empty_output_buffer.unwrap())(&mut j);
-            assert!(w.iface.free_in_buffer > 0);
-            let slice = std::slice::from_raw_parts_mut(w.iface.next_output_byte, w.iface.free_in_buffer);
-            slice.iter_mut().enumerate().for_each(|(i, s)| *s = i as u8);
-            expected.extend_from_slice(slice);
-            w.iface.next_output_byte = w.iface.next_output_byte.add(w.iface.free_in_buffer);
-            w.iface.free_in_buffer = 0;
-            (w.iface.empty_output_buffer.unwrap())(&mut j);
-            assert!(w.iface.free_in_buffer > 0);
+            if any_write_first {
+                while w.iface.free_in_buffer > 0 {
+                    expected.push(123);
+                    *w.iface.next_output_byte = 123;
+                    w.iface.next_output_byte = w.iface.next_output_byte.add(1);
+                    w.iface.free_in_buffer -= 1;
+                }
+                (w.iface.empty_output_buffer.unwrap())(&mut j);
+                assert!(w.iface.free_in_buffer > 0);
+                let slice = std::slice::from_raw_parts_mut(w.iface.next_output_byte, w.iface.free_in_buffer);
+                slice.iter_mut().enumerate().for_each(|(i, s)| *s = i as u8);
+                expected.extend_from_slice(slice);
+                w.iface.next_output_byte = w.iface.next_output_byte.add(1); // yes, can be invalid!
+                w.iface.free_in_buffer = 999; // yes, can be invalid!
+                (w.iface.empty_output_buffer.unwrap())(&mut j);
+                assert!(w.iface.free_in_buffer > 0);
+            }
             let slice = std::slice::from_raw_parts_mut(w.iface.next_output_byte, w.iface.free_in_buffer-1);
-            slice.fill(33);
+            slice.iter_mut().enumerate().for_each(|(i, s)| *s = (i*17) as u8);
             expected.extend_from_slice(slice);
             w.iface.next_output_byte = w.iface.next_output_byte.add(slice.len());
-            w.iface.free_in_buffer -= slice.len();
+            w.iface.free_in_buffer -= slice.len(); // now must be valid
             (w.iface.term_destination.unwrap())(&mut j);
             assert_eq!(expected, w.into_inner());
         }
-    }
+    }}
 }
