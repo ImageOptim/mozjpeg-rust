@@ -18,6 +18,7 @@ use crate::writedst::DestinationMgr;
 use arrayvec::ArrayVec;
 use std::cmp::min;
 use std::io;
+use std::marker::PhantomPinned;
 use std::mem;
 use std::os::raw::{c_int, c_uchar, c_uint, c_ulong, c_void};
 use std::ptr;
@@ -32,7 +33,11 @@ const MAX_COMPONENTS: usize = 4;
 /// Wrapper for `jpeg_compress_struct`
 pub struct Compress {
     cinfo: jpeg_compress_struct,
-    own_err: Box<ErrorMgr>,
+
+    /// It's `Box<ErrorMgr>`, but `cinfo` references `own_err`,
+    /// so I need talismans to ward off nasal demons haunting self-referential structs
+    own_err: *mut ErrorMgr,
+    _it_is_self_referential: PhantomPinned,
 }
 
 #[derive(Copy, Clone)]
@@ -72,7 +77,8 @@ impl Compress {
         unsafe {
             let mut newself = Compress {
                 cinfo: mem::zeroed(),
-                own_err: err,
+                own_err: Box::into_raw(err),
+                _it_is_self_referential: PhantomPinned,
             };
             newself.cinfo.common.err = addr_of_mut!(*newself.own_err);
 
@@ -431,6 +437,8 @@ impl Drop for Compress {
         unsafe {
             self.cinfo.dest = ptr::null_mut();
             ffi::jpeg_destroy_compress(&mut self.cinfo);
+            // ErrorMgr is destroyed after cinfo can no longer reference it
+            let _ = Box::from_raw(self.own_err);
         }
     }
 }
