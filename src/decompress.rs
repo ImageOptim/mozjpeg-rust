@@ -537,7 +537,7 @@ impl<R> DecompressStarted<R> {
         let height = self.height();
         let line_width = width * item_size;
         if dest.len() % line_width != 0 {
-            return Err(io::Error::new(io::ErrorKind::Unsupported, format!("destination slice length must be multiple of {width}x{num_components} bytes long, got {}B", dest.len() * mem::size_of::<T>())));
+            return Err(io::Error::new(io::ErrorKind::Unsupported, format!("destination slice length must be multiple of {width}x{num_components} bytes long, got {}B", std::mem::size_of_val(dest))));
         }
         for row in dest.chunks_exact_mut(line_width) {
             if !self.can_read_more_scanlines() {

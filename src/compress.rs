@@ -463,7 +463,7 @@ fn write_mem() {
     cinfo.set_quality(88.);
 
     cinfo.set_chroma_sampling_pixel_sizes((1,1), (1,1));
-    for c in cinfo.components().iter() {
+    for c in cinfo.components() {
         assert_eq!(c.v_samp_factor, 1);
         assert_eq!(c.h_samp_factor, 1);
     }

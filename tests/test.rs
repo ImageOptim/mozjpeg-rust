@@ -49,7 +49,7 @@ fn raw_jpeg() {
 
         let rounded_size = (size + 7) / 8 * 8;
         let t = vec![128; rounded_size * rounded_size];
-        let components = vec![&t[..], &t[..], &t[..]];
+        let components = [&t[..], &t[..], &t[..]];
         comp.write_raw_data(&components[..]);
 
         let jpeg = comp.finish().unwrap();
