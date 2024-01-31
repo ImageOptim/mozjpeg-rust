@@ -143,6 +143,39 @@ impl<W> CompressStarted<W> {
         }
     }
 
+    /// Add ICC profile to compressed file
+    ///
+    /// ## Panics
+    ///
+    /// It may panic, like all functions of this library.
+    pub fn write_icc_profile(&mut self, data: &[u8]) {
+        use crate::fail;
+
+        const OVERHEAD_LEN: usize = 14;
+        const MAX_BYTES_IN_MARKER: usize = 65533;
+        const MAX_DATA_BYTES_IN_MARKER: usize = MAX_BYTES_IN_MARKER - OVERHEAD_LEN;
+
+        if data.is_empty() {
+            fail(&mut self.compress.cinfo.common, ffi::JERR_BUFFER_SIZE);
+        }
+
+        let chunks = data.chunks(MAX_DATA_BYTES_IN_MARKER);
+
+        let num_components = chunks.len();
+
+        chunks.enumerate().for_each(|(current_marker, chunk)| {
+            let buf = [
+                &b"ICC_PROFILE\0"[..],
+                &[(current_marker as u8)],
+                &[(num_components as u8)],
+                chunk,
+            ]
+            .concat();
+
+            self.write_marker(Marker::APP(2), &buf)
+        });
+    }
+
     /// Read-only view of component information
     pub fn components(&self) -> &[CompInfo] {
         self.compress.components()
