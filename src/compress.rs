@@ -164,13 +164,10 @@ impl<W> CompressStarted<W> {
         let num_components = chunks.len();
 
         chunks.enumerate().for_each(|(current_marker, chunk)| {
-            let buf = [
-                &b"ICC_PROFILE\0"[..],
-                &[(current_marker as u8)],
-                &[(num_components as u8)],
-                chunk,
-            ]
-            .concat();
+            let mut buf = b"ICC_PROFILE\0".to_vec();
+            buf.push(current_marker as u8);
+            buf.push(num_components as u8);
+            buf.extend_from_slice(chunk);
 
             self.write_marker(Marker::APP(2), &buf)
         });
