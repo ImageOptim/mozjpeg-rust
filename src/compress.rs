@@ -4,6 +4,7 @@ use crate::component::CompInfo;
 use crate::component::CompInfoExt;
 use crate::errormgr::unwinding_error_mgr;
 use crate::errormgr::ErrorMgr;
+use crate::fail;
 use crate::ffi;
 use crate::ffi::boolean;
 use crate::ffi::jpeg_compress_struct;
@@ -149,8 +150,6 @@ impl<W> CompressStarted<W> {
     ///
     /// It may panic, like all functions of this library.
     pub fn write_icc_profile(&mut self, data: &[u8]) {
-        use crate::fail;
-
         const OVERHEAD_LEN: usize = 14;
         const MAX_BYTES_IN_MARKER: usize = 65533;
         const MAX_DATA_BYTES_IN_MARKER: usize = MAX_BYTES_IN_MARKER - OVERHEAD_LEN;
@@ -160,13 +159,14 @@ impl<W> CompressStarted<W> {
         }
 
         let chunks = data.chunks(MAX_DATA_BYTES_IN_MARKER);
+        let num_chunks = chunks.len();
 
-        let num_components = chunks.len();
+        let mut buf = Vec::with_capacity(MAX_BYTES_IN_MARKER.min(data.len() + OVERHEAD_LEN));
 
-        chunks.enumerate().for_each(|(current_marker, chunk)| {
-            let mut buf = b"ICC_PROFILE\0".to_vec();
-            buf.push(current_marker as u8);
-            buf.push(num_components as u8);
+        chunks.enumerate().for_each(move |(current_marker, chunk)| {
+            buf.clear();
+            buf.extend_from_slice(b"ICC_PROFILE\0");
+            buf.extend([current_marker as u8, num_chunks as u8]);
             buf.extend_from_slice(chunk);
 
             self.write_marker(Marker::APP(2), &buf)
