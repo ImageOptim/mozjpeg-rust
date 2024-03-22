@@ -12,6 +12,7 @@ pub use crate::compress::Compress;
 pub use crate::compress::ScanMode;
 pub use crate::decompress::{DctMethod, Format};
 pub use crate::decompress::{Decompress, ALL_MARKERS, NO_MARKERS};
+pub use crate::density::{PixelDensity, PixelDensityUnit};
 use crate::ffi::boolean;
 use crate::ffi::jpeg_common_struct;
 use crate::ffi::jpeg_compress_struct;
@@ -33,6 +34,7 @@ mod colorspace;
 mod component;
 mod compress;
 pub mod decompress;
+mod density;
 mod errormgr;
 mod marker;
 /// Quantization table presets from MozJPEG

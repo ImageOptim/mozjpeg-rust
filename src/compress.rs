@@ -1,4 +1,4 @@
-use crate::colorspace::ColorSpace;
+use crate::{colorspace::ColorSpace, PixelDensity};
 use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
 use crate::component::CompInfoExt;
@@ -330,6 +330,13 @@ impl Compress {
     #[deprecated(note = "it doesn't do anything")]
     pub fn set_gamma(&mut self, gamma: f64) {
         self.cinfo.input_gamma = gamma;
+    }
+
+    /// Sets pixel density of an image written in JFIF APP0 segment.
+    pub fn set_pixel_density(&mut self, density: PixelDensity) {
+        self.cinfo.density_unit = density.unit as u8;
+        self.cinfo.X_density = density.x;
+        self.cinfo.Y_density = density.y;
     }
 
     /// If true, it will use MozJPEG's scan optimization. Makes progressive image files smaller.
