@@ -16,7 +16,7 @@ rust-version = "1.71"
 
 [dependencies]
 libc = "0.2.150"
-mozjpeg-sys = { git = "https://github.com/kornelski/mozjpeg-sys.git", branch = "main", default-features = false, features = ["unwinding"] }
+mozjpeg-sys = { version = "2.1.0", default-features = false, features = ["unwinding"] }
 rgb = { version = "0.8.34", features = ["as-bytes"] }
 arrayvec = "0.7.4"
 
