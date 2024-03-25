@@ -332,7 +332,13 @@ impl Compress {
         self.cinfo.input_gamma = gamma;
     }
 
-    /// Sets pixel density of an image
+
+    /// Sets pixel density of an image in the JFIF APP0 segment[^note].
+    /// If this method is not called, the resulting JPEG will have a default
+    /// pixel aspect ratio of 1x1.
+    ///
+    /// [^note]: This method is not related to EXIF-based intrinsic image sizing,
+    /// and does not affect rendering in browsers.
     pub fn set_pixel_density(&mut self, density: PixelDensity) {
         self.cinfo.density_unit = density.unit as u8;
         self.cinfo.X_density = density.x;
