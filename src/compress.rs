@@ -1,4 +1,4 @@
-use crate::colorspace::ColorSpace;
+use crate::{colorspace::ColorSpace, PixelDensity};
 use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
 use crate::component::CompInfoExt;
@@ -330,6 +330,19 @@ impl Compress {
     #[deprecated(note = "it doesn't do anything")]
     pub fn set_gamma(&mut self, gamma: f64) {
         self.cinfo.input_gamma = gamma;
+    }
+
+
+    /// Sets pixel density of an image in the JFIF APP0 segment[^note].
+    /// If this method is not called, the resulting JPEG will have a default
+    /// pixel aspect ratio of 1x1.
+    ///
+    /// [^note]: This method is not related to EXIF-based intrinsic image sizing,
+    /// and does not affect rendering in browsers.
+    pub fn set_pixel_density(&mut self, density: PixelDensity) {
+        self.cinfo.density_unit = density.unit as u8;
+        self.cinfo.X_density = density.x;
+        self.cinfo.Y_density = density.y;
     }
 
     /// If true, it will use MozJPEG's scan optimization. Makes progressive image files smaller.

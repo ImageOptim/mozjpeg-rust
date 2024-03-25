@@ -1,5 +1,5 @@
 //! See the `Decompress` struct instead. You don't need to use this module directly.
-use crate::colorspace::ColorSpace;
+use crate::{colorspace::ColorSpace, PixelDensity};
 use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
 use crate::component::CompInfoExt;
@@ -287,6 +287,24 @@ impl<R> Decompress<R> {
     pub fn gamma(&self) -> f64 {
         self.cinfo.output_gamma
     }
+
+    /// Get pixel density of an image from the JFIF APP0 segment.
+    /// Returns None in case of an invalid density unit.
+    #[inline]
+    #[must_use]
+    pub fn pixel_density(&mut self) -> Option<PixelDensity> {
+        Some(PixelDensity {
+            unit: match self.cinfo.density_unit {
+                0 => crate::PixelDensityUnit::PixelAspectRatio,
+                1 => crate::PixelDensityUnit::Inches,
+                2 => crate::PixelDensityUnit::Centimeters,
+                _ => return None,
+            },
+            x: self.cinfo.X_density,
+            y: self.cinfo.Y_density,
+        })
+    }
+
 
     /// Markers are available only if you enable them via `with_markers()`
     #[inline]
