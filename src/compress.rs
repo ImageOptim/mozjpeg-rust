@@ -332,7 +332,7 @@ impl Compress {
         self.cinfo.input_gamma = gamma;
     }
 
-    /// Sets pixel density of an image written in JFIF APP0 segment.
+    /// Sets pixel density of an image
     pub fn set_pixel_density(&mut self, density: PixelDensity) {
         self.cinfo.density_unit = density.unit as u8;
         self.cinfo.X_density = density.x;
