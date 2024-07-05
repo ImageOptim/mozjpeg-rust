@@ -26,8 +26,10 @@ use std::ptr;
 use std::ptr::addr_of_mut;
 use std::slice;
 
-const MAX_MCU_HEIGHT: usize = 16;
-const MAX_COMPONENTS: usize = 4;
+/// Max sampling factor is 2
+pub const MAX_MCU_HEIGHT: usize = 16;
+/// Codec doesn't allow more channels than this
+pub const MAX_COMPONENTS: usize = 4;
 
 /// Create a new JPEG file from pixels
 ///
@@ -44,6 +46,7 @@ pub struct Compress {
 #[derive(Copy, Clone)]
 pub enum ScanMode {
     AllComponentsTogether = 0,
+    /// Can flash grayscale or green-tinted images
     ScanPerComponent = 1,
     Auto = 2,
 }

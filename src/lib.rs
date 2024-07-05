@@ -33,7 +33,7 @@ use std::slice;
 
 mod colorspace;
 mod component;
-mod compress;
+pub mod compress;
 pub mod decompress;
 mod density;
 mod errormgr;
