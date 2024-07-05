@@ -12,6 +12,7 @@ use mozjpeg_sys::J_MESSAGE_CODE;
 use mozjpeg_sys::{JPOOL_IMAGE, JPOOL_PERMANENT};
 use std::io;
 use std::io::Write;
+use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
 use std::os::raw::c_int;
 use std::os::raw::c_long;
@@ -24,6 +25,8 @@ pub(crate) struct DestinationMgr<W> {
     pub(crate) iface: jpeg_destination_mgr,
     buf: Vec<u8>,
     writer: W,
+    // jpeg_destination_mgr callbacks get a pointer to the struct
+    _pinned: PhantomPinned,
 }
 
 impl<W: Write> DestinationMgr<W> {
@@ -40,6 +43,7 @@ impl<W: Write> DestinationMgr<W> {
             // BufWriter doesn't expose unwritten buffer
             buf: Vec::with_capacity(if capacity > 0 { capacity.min(i32::MAX as usize) } else { 4096 }),
             writer,
+            _pinned: PhantomPinned,
         }
     }
 
