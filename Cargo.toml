@@ -15,9 +15,9 @@ edition = "2021"
 rust-version = "1.71"
 
 [dependencies]
-libc = "0.2.150"
-mozjpeg-sys = { version = "2.1.0", default-features = false, features = ["unwinding"] }
-rgb = { version = "0.8.34", features = ["as-bytes"] }
+libc = "0.2.155"
+mozjpeg-sys = { version = "2.2.0", default-features = false, features = ["unwinding"] }
+rgb = { version = "0.8.40", features = ["as-bytes"] }
 arrayvec = "0.7.4"
 
 [features]
@@ -27,7 +27,7 @@ nasm_simd = ["mozjpeg-sys/nasm_simd"]
 with_simd = ["mozjpeg-sys/with_simd"]
 
 [dev-dependencies]
-bytemuck = "1.12.1"
+bytemuck = "1.16.1"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
