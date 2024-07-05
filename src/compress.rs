@@ -169,7 +169,7 @@ impl<W> CompressStarted<W> {
             buf.extend([current_marker as u8, num_chunks as u8]);
             buf.extend_from_slice(chunk);
 
-            self.write_marker(Marker::APP(2), &buf)
+            self.write_marker(Marker::APP(2), &buf);
         });
     }
 

@@ -114,7 +114,7 @@ impl<R: BufRead> SourceMgr<R> {
             return;
         }
         let this = Self::cast(cinfo);
-        let mut num_bytes = num_bytes as usize;
+        let mut num_bytes = usize::try_from(num_bytes).unwrap();
 
         loop {
             if this.iface.bytes_in_buffer > 0 {
@@ -126,7 +126,7 @@ impl<R: BufRead> SourceMgr<R> {
             if num_bytes == 0 {
                 break;
             }
-            if let Err(_) = this.fill_input_buffer_impl() {
+            if this.fill_input_buffer_impl().is_err() {
                 fail(&mut cinfo.common, JERR_FILE_READ);
             }
         }

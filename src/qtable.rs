@@ -55,10 +55,10 @@ impl QTable {
 
             // TODO: that could be improved for 1x2 and 2x1 subsampling
             for ((out, coef), w) in low_out.iter_mut().zip(low_coefs).zip(&low_weights) {
-                *out = min(255, max(1, (*coef as f32 * (dc_scaling * w + ac_scaling * (1.-w))).round() as Coef));
+                *out = ((*coef as f32 * (dc_scaling * w + ac_scaling * (1.-w))).round() as Coef).clamp(1, 255);
             }
             for (out, coef) in high_out.iter_mut().zip(high_coefs) {
-                *out = min(255, max(1, (*coef as f32 * ac_scaling).round() as Coef));
+                *out = ((*coef as f32 * ac_scaling).round() as Coef).clamp(1, 255);
             }
         }
         Self { coeffs: out }

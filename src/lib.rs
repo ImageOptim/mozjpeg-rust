@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![allow(unused_attributes)]
 #![allow(unused_imports)]
+#![allow(clippy::manual_range_contains)]
 
 use mozjpeg_sys as ffi;
 

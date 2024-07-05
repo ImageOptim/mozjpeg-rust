@@ -101,7 +101,7 @@ impl<W: Write> DestinationMgr<W> {
         if let Err(code) = this.write_buffer(false) {
             fail(&mut cinfo.common, code);
         }
-        if let Err(_) = this.writer.flush() {
+        if this.writer.flush().is_err() {
             fail(&mut cinfo.common, JERR_FILE_WRITE);
         }
         this.iface.free_in_buffer = 0;

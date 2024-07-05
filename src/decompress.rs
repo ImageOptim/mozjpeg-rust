@@ -118,6 +118,13 @@ impl<'markers> DecompressBuilder<'markers> {
     }
 }
 
+impl<'markers> Default for DecompressBuilder<'markers> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Get pixels out of a JPEG file
 ///
 /// High-level wrapper for `jpeg_decompress_struct`
