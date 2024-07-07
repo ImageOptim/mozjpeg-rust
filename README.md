@@ -11,7 +11,7 @@ In crates compiled with `panic=abort` setting, any JPEG error will abort the pro
 ## Decoding example
 
 ```rust
-std::panic::catch_unwind(|| -> std::io::Result<Vec<rgb::RGB8>> {
+std::panic::catch_unwind(|| -> std::io::Result<Vec<rgb::Rgb::<u8>>> {
     let d = mozjpeg::Decompress::with_markers(mozjpeg::ALL_MARKERS)
         .from_path("tests/test.jpg")?;
 

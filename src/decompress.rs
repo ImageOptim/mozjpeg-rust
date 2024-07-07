@@ -1,4 +1,5 @@
 //! See the `Decompress` struct instead. You don't need to use this module directly.
+use bytemuck::Pod;
 use crate::{colorspace::ColorSpace, PixelDensity};
 use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
@@ -530,7 +531,7 @@ impl<R> DecompressStarted<R> {
     ///
     /// Pixels can either have number of bytes matching number of channels, e.g. RGB as
     /// `[u8; 3]` or `rgb::RGB8`, or be an amorphous blob of `u8`s.
-    pub fn read_scanlines<T: rgb::Pod>(&mut self) -> io::Result<Vec<T>> {
+    pub fn read_scanlines<T: Pod>(&mut self) -> io::Result<Vec<T>> {
         let num_components = self.color_space().num_components();
         if num_components != mem::size_of::<T>() && mem::size_of::<T>() != 1 {
             return Err(io::Error::new(io::ErrorKind::Unsupported, format!("pixel size must have {num_components} bytes, but has {}", mem::size_of::<T>())));
@@ -549,7 +550,7 @@ impl<R> DecompressStarted<R> {
     /// `[u8; 3]` and `rgb::RGB8` are fine, for example. `[u8]` is allowed for any pixel type.
     ///
     /// Allocation-less version of `read_scanlines`
-    pub fn read_scanlines_into<'dest, T: rgb::Pod>(&mut self, dest: &'dest mut [T]) -> io::Result<&'dest mut [T]> {
+    pub fn read_scanlines_into<'dest, T: Pod>(&mut self, dest: &'dest mut [T]) -> io::Result<&'dest mut [T]> {
         let num_components = self.color_space().num_components();
         let item_size = if mem::size_of::<T>() == 1 {
             num_components
