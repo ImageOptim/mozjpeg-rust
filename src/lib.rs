@@ -41,7 +41,6 @@ mod marker;
 /// Quantization table presets from MozJPEG
 pub mod qtable;
 mod readsrc;
-mod vec;
 mod writedst;
 
 #[test]

@@ -1,4 +1,5 @@
 //! See the `Decompress` struct instead. You don't need to use this module directly.
+use std::mem::MaybeUninit;
 use bytemuck::Pod;
 use crate::{colorspace::ColorSpace, PixelDensity};
 use crate::colorspace::ColorSpaceExt;
@@ -13,7 +14,6 @@ use crate::ffi::JPEG_LIB_VERSION;
 use crate::ffi::J_COLOR_SPACE as COLOR_SPACE;
 use crate::marker::Marker;
 use crate::readsrc::SourceMgr;
-use crate::vec::VecUninitExtender;
 use libc::fdopen;
 use std::cmp::min;
 use std::fs::File;
@@ -471,15 +471,16 @@ impl<R> DecompressStarted<R> {
         self.dec.cinfo.output_scanline < self.dec.cinfo.output_height
     }
 
+    /// Append data
     #[track_caller]
-    pub fn read_raw_data(&mut self, image_dest: &mut [&mut Vec<u8>]) {
+    pub fn read_raw_data(&mut self, image_dest: &mut [&mut Vec<ffi::JSAMPLE>]) {
         while self.can_read_more_scanlines() {
             self.read_raw_data_chunk(image_dest);
         }
     }
 
     #[track_caller]
-    fn read_raw_data_chunk(&mut self, image_dest: &mut [&mut Vec<u8>]) {
+    fn read_raw_data_chunk(&mut self, image_dest: &mut [&mut Vec<ffi::JSAMPLE>]) {
         assert!(0 != self.dec.cinfo.raw_data_out, "Raw data not set");
 
         let mcu_height = self.dec.cinfo.max_v_samp_factor as usize * DCTSIZE;
@@ -493,27 +494,38 @@ impl<R> DecompressStarted<R> {
         }
 
         unsafe {
-            let mut row_ptrs = [[ptr::null_mut::<u8>(); MAX_MCU_HEIGHT]; MAX_COMPONENTS];
-            let mut comp_ptrs = [ptr::null_mut::<*mut u8>(); MAX_COMPONENTS];
-            for (ci, comp_info) in self.dec.components().iter().enumerate() {
+            let mut row_ptrs = [[ptr::null_mut::<ffi::JSAMPLE>(); MAX_MCU_HEIGHT]; MAX_COMPONENTS];
+            let mut comp_ptrs = [ptr::null_mut::<*mut ffi::JSAMPLE>(); MAX_COMPONENTS];
+            for ((comp_info, comp_dest), (comp_ptrs, row_ptrs)) in self.dec.components().iter().zip(&mut *image_dest).zip(comp_ptrs.iter_mut().zip(row_ptrs.iter_mut())) {
                 let row_stride = comp_info.row_stride();
 
                 let comp_height = comp_info.v_samp_factor as usize * DCTSIZE;
-                let original_len = image_dest[ci].len();
-                image_dest[ci].extend_uninit(comp_height * row_stride);
+                let required_len = comp_height * row_stride;
+                comp_dest.try_reserve(required_len).expect("oom");
+                let comp_dest = &mut comp_dest.spare_capacity_mut()[..required_len];
                 for ri in 0..comp_height {
-                    let start = original_len + ri * row_stride;
-                    row_ptrs[ci][ri] = image_dest[ci][start..start + row_stride].as_mut_ptr();
+                    let start = ri * row_stride;
+                    row_ptrs[ri] = comp_dest[start..start + row_stride].as_mut_ptr().cast();
                 }
                 for ri in comp_height..mcu_height {
-                    row_ptrs[ci][ri] = ptr::null_mut();
+                    row_ptrs[ri] = ptr::null_mut();
                 }
-                comp_ptrs[ci] = row_ptrs[ci].as_mut_ptr();
+                *comp_ptrs = row_ptrs.as_mut_ptr();
             }
 
             let lines_read = ffi::jpeg_read_raw_data(&mut self.dec.cinfo, comp_ptrs.as_mut_ptr(), mcu_height as u32) as usize;
 
             assert_eq!(lines_read, mcu_height); // Partial reads would make subsampled height tricky to define
+
+            for (comp_info, comp_dest) in self.dec.components().iter().zip(image_dest) {
+                let row_stride = comp_info.row_stride();
+
+                let comp_height = comp_info.v_samp_factor as usize * DCTSIZE;
+                let original_len = comp_dest.len();
+                let required_len = comp_height * row_stride;
+                debug_assert!(original_len + required_len <= comp_dest.capacity());
+                comp_dest.set_len(original_len + required_len);
+            }
         }
     }
 
