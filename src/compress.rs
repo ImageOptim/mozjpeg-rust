@@ -66,8 +66,8 @@ impl Compress {
     /// By default errors cause unwind (panic) and unwind through the C code,
     /// which strictly speaking is not guaranteed to work in Rust (but seems to work fine, at least on x86-64 and ARM).
     #[must_use]
-    pub fn new(color_space: ColorSpace) -> Compress {
-        Compress::new_err(unwinding_error_mgr(), color_space)
+    pub fn new(color_space: ColorSpace) -> Self {
+        Self::new_err(unwinding_error_mgr(), color_space)
     }
 
     /// Use a specific error handler instead of the default unwinding one.
@@ -77,9 +77,9 @@ impl Compress {
     ///
     /// `color_space` refers to input color space
     #[must_use]
-    pub fn new_err(err: Box<ErrorMgr>, color_space: ColorSpace) -> Compress {
+    pub fn new_err(err: Box<ErrorMgr>, color_space: ColorSpace) -> Self {
         unsafe {
-            let mut newself = Compress {
+            let mut newself = Self {
                 cinfo: mem::zeroed(),
                 own_err: Box::into_raw(err),
                 _it_is_self_referential: PhantomPinned,
@@ -113,7 +113,7 @@ impl Compress {
 
         // 1bpp, rounded to 4K page
         let expected_file_size = (self.cinfo.image_width as usize * self.cinfo.image_height as usize / 8 + 4095) & !4095;
-        let write_buffer_capacity = expected_file_size.clamp(1<<12, 1<<16);
+        let write_buffer_capacity = expected_file_size.clamp(1 << 12, 1 << 16);
 
         let mut started = CompressStarted {
             compress: self,
@@ -122,7 +122,7 @@ impl Compress {
         unsafe {
             let dest_ptr = addr_of_mut!(started.dest_mgr.as_mut().iface);
             started.compress.cinfo.dest = dest_ptr;
-            ffi::jpeg_start_compress(&mut started.compress.cinfo, true as boolean);
+            ffi::jpeg_start_compress(&mut started.compress.cinfo, boolean::from(true));
         }
         Ok(started)
     }
@@ -177,6 +177,7 @@ impl<W> CompressStarted<W> {
     }
 
     /// Read-only view of component information
+    #[must_use]
     pub fn components(&self) -> &[CompInfo] {
         self.compress.components()
     }
@@ -335,7 +336,6 @@ impl Compress {
         self.cinfo.input_gamma = gamma;
     }
 
-
     /// Sets pixel density of an image in the JFIF APP0 segment[^note].
     /// If this method is not called, the resulting JPEG will have a default
     /// pixel aspect ratio of 1x1.
@@ -351,7 +351,7 @@ impl Compress {
     /// If true, it will use MozJPEG's scan optimization. Makes progressive image files smaller.
     pub fn set_optimize_scans(&mut self, opt: bool) {
         unsafe {
-            ffi::jpeg_c_set_bool_param(&mut self.cinfo, J_BOOLEAN_PARAM::JBOOLEAN_OPTIMIZE_SCANS, opt as boolean);
+            ffi::jpeg_c_set_bool_param(&mut self.cinfo, J_BOOLEAN_PARAM::JBOOLEAN_OPTIMIZE_SCANS, boolean::from(opt));
         }
         if !opt {
             self.cinfo.scan_info = ptr::null();
@@ -360,19 +360,19 @@ impl Compress {
 
     /// If 1-100 (non-zero), it will use MozJPEG's smoothing.
     pub fn set_smoothing_factor(&mut self, smoothing_factor: u8) {
-        self.cinfo.smoothing_factor = smoothing_factor as c_int;
+        self.cinfo.smoothing_factor = c_int::from(smoothing_factor);
     }
 
     /// Set to `false` to make files larger for no reason
     pub fn set_optimize_coding(&mut self, opt: bool) {
-        self.cinfo.optimize_coding = opt as boolean;
+        self.cinfo.optimize_coding = boolean::from(opt);
     }
 
     /// Specifies whether multiple scans should be considered during trellis
     /// quantization.
     pub fn set_use_scans_in_trellis(&mut self, opt: bool) {
         unsafe {
-            ffi::jpeg_c_set_bool_param(&mut self.cinfo, J_BOOLEAN_PARAM::JBOOLEAN_USE_SCANS_IN_TRELLIS, opt as boolean);
+            ffi::jpeg_c_set_bool_param(&mut self.cinfo, J_BOOLEAN_PARAM::JBOOLEAN_USE_SCANS_IN_TRELLIS, boolean::from(opt));
         }
     }
 
@@ -403,13 +403,13 @@ impl Compress {
 
     /// Advanced. See `raw_data_in` in libjpeg docs.
     pub fn set_raw_data_in(&mut self, opt: bool) {
-        self.cinfo.raw_data_in = opt as boolean;
+        self.cinfo.raw_data_in = boolean::from(opt);
     }
 
     /// Set image quality. Values 60-80 are recommended.
     pub fn set_quality(&mut self, quality: f32) {
         unsafe {
-            ffi::jpeg_set_quality(&mut self.cinfo, quality as c_int, false as boolean);
+            ffi::jpeg_set_quality(&mut self.cinfo, quality as c_int, boolean::from(false));
         }
     }
 
@@ -508,13 +508,13 @@ fn write_mem() {
 
     cinfo.set_quality(88.);
 
-    cinfo.set_chroma_sampling_pixel_sizes((1,1), (1,1));
+    cinfo.set_chroma_sampling_pixel_sizes((1, 1), (1, 1));
     for c in cinfo.components() {
         assert_eq!(c.v_samp_factor, 1);
         assert_eq!(c.h_samp_factor, 1);
     }
 
-    cinfo.set_chroma_sampling_pixel_sizes((2,2), (2,2));
+    cinfo.set_chroma_sampling_pixel_sizes((2, 2), (2, 2));
     for (c, samp) in cinfo.components().iter().zip([2, 1, 1]) {
         assert_eq!(c.v_samp_factor, samp);
         assert_eq!(c.h_samp_factor, samp);
@@ -522,7 +522,7 @@ fn write_mem() {
 
     let mut cinfo = cinfo.start_compress(Vec::new()).unwrap();
 
-    cinfo.write_marker(Marker::APP(2), "Hello World".as_bytes());
+    cinfo.write_marker(Marker::APP(2), b"Hello World");
 
     assert_eq!(24, cinfo.components()[0].row_stride());
     assert_eq!(40, cinfo.components()[0].col_stride());

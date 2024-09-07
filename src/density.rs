@@ -16,7 +16,7 @@ pub struct PixelDensity {
 
 impl Default for PixelDensity {
     fn default() -> Self {
-        PixelDensity {
+        Self {
             unit: PixelDensityUnit::PixelAspectRatio,
             x: 1,
             y: 1,

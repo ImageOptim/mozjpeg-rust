@@ -14,10 +14,8 @@ use std::io;
 use std::io::Write;
 use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
-use std::os::raw::c_int;
-use std::os::raw::c_long;
-use std::os::raw::c_uint;
 use std::ptr;
+use std::os::raw::{c_int, c_long, c_uint};
 use std::ptr::NonNull;
 
 #[repr(C)]

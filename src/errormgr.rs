@@ -6,6 +6,7 @@ use std::os::raw::c_int;
 
 pub use crate::ffi::jpeg_error_mgr as ErrorMgr;
 
+#[allow(clippy::unnecessary_box_returns)]
 pub(crate) fn unwinding_error_mgr() -> Box<ErrorMgr> {
     unsafe {
         let mut err = Box::new(mem::zeroed());

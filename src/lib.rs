@@ -45,11 +45,9 @@ mod writedst;
 
 #[test]
 fn recompress() {
-    use crate::colorspace::ColorSpace;
-    use crate::colorspace::ColorSpaceExt;
+    use crate::colorspace::{ColorSpace, ColorSpaceExt};
     use std::fs::File;
-    use std::io::Read;
-    use std::io::Write;
+    use std::io::{Read, Write};
 
     let dinfo = Decompress::new_path("tests/test.jpg").unwrap();
 
@@ -57,7 +55,7 @@ fn recompress() {
     assert_eq!(ColorSpace::JCS_YCbCr, dinfo.color_space());
     assert_eq!(dinfo.components().len(), dinfo.color_space().num_components() as usize);
 
-    let samp_factors = dinfo.components().iter().map(|c|c.v_samp_factor).collect::<Vec<_>>();
+    let samp_factors = dinfo.components().iter().map(|c| c.v_samp_factor).collect::<Vec<_>>();
 
     assert_eq!((45, 30), dinfo.size());
 
@@ -69,7 +67,6 @@ fn recompress() {
     dinfo.finish().unwrap();
 
     fn write_jpeg(bitmaps: &[&mut Vec<u8>; 3], samp_factors: &Vec<i32>, scale: (f32, f32)) -> Vec<u8> {
-
         let mut cinfo = Compress::new(ColorSpace::JCS_YCbCr);
 
         cinfo.set_size(45, 30);

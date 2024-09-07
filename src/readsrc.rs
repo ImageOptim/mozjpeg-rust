@@ -7,8 +7,7 @@ use mozjpeg_sys::{JERR_FILE_READ, JERR_VIRTUAL_BUG};
 use mozjpeg_sys::{JPOOL_IMAGE, JPOOL_PERMANENT, JWRN_JPEG_EOF};
 use std::io::{self, BufRead, BufReader, Read};
 use std::mem::MaybeUninit;
-use std::os::raw::c_void;
-use std::os::raw::{c_int, c_long, c_uint};
+use std::os::raw::{c_int, c_long, c_uint, c_void};
 use std::ptr;
 use std::ptr::NonNull;
 
@@ -104,7 +103,7 @@ impl<R: BufRead> SourceMgr<R> {
             },
             Err(_) => {
                 fail(&mut cinfo.common, JERR_FILE_READ);
-            }
+            },
         }
     }
 

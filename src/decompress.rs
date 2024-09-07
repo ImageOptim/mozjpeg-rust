@@ -313,7 +313,6 @@ impl<R> Decompress<R> {
         })
     }
 
-
     /// Markers are available only if you enable them via `with_markers()`
     #[inline]
     #[must_use]
@@ -387,7 +386,7 @@ impl<R> Decompress<R> {
     // a faster but sloppier method is used.  Default is `true`.  The visual
     // impact of the sloppier method is often very small.
     pub fn do_fancy_upsampling(&mut self, value: bool) {
-        self.cinfo.do_fancy_upsampling = value as ffi::boolean;
+        self.cinfo.do_fancy_upsampling = ffi::boolean::from(value);
     }
 
     /// If `true`, interblock smoothing is applied in early stages of decoding
@@ -397,12 +396,12 @@ impl<R> Decompress<R> {
     /// AC coefficients are known to full accuracy, so it is relevant only
     /// when using buffered-image mode for progressive images.
     pub fn do_block_smoothing(&mut self, value: bool) {
-        self.cinfo.do_block_smoothing = value as ffi::boolean;
+        self.cinfo.do_block_smoothing = ffi::boolean::from(value);
     }
 
     #[inline(always)]
     pub fn raw(mut self) -> io::Result<DecompressStarted<R>> {
-        self.cinfo.raw_data_out = true as ffi::boolean;
+        self.cinfo.raw_data_out = ffi::boolean::from(true);
         DecompressStarted::start_decompress(self)
     }
 
@@ -417,7 +416,7 @@ impl<R> Decompress<R> {
             JCS_RGB => Ok(Format::RGB(DecompressStarted::start_decompress(self)?)),
             JCS_CMYK => Ok(Format::CMYK(DecompressStarted::start_decompress(self)?)),
             JCS_GRAYSCALE => Ok(Format::Gray(DecompressStarted::start_decompress(self)?)),
-            _ => Ok(Format::RGB(self.rgb()?))
+            _ => Ok(Format::RGB(self.rgb()?)),
         }
     }
 
@@ -447,7 +446,7 @@ pub struct DecompressStarted<R> {
 
 impl<R> DecompressStarted<R> {
     fn start_decompress(dec: Decompress<R>) -> io::Result<Self> {
-        let mut dec = DecompressStarted { dec };
+        let mut dec = Self { dec };
         if 0 != unsafe { ffi::jpeg_start_decompress(&mut dec.dec.cinfo) } {
             Ok(dec)
         } else {
@@ -546,7 +545,10 @@ impl<R> DecompressStarted<R> {
     pub fn read_scanlines<T: Pod>(&mut self) -> io::Result<Vec<T>> {
         let num_components = self.color_space().num_components();
         if num_components != mem::size_of::<T>() && mem::size_of::<T>() != 1 {
-            return Err(io::Error::new(io::ErrorKind::Unsupported, format!("pixel size must have {num_components} bytes, but has {}", mem::size_of::<T>())));
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("pixel size must have {num_components} bytes, but has {}", mem::size_of::<T>()),
+            ));
         }
         let width = self.width();
         let height = self.height();
@@ -579,13 +581,19 @@ impl<R> DecompressStarted<R> {
         } else if num_components == mem::size_of::<T>() {
             1
         } else {
-            return Err(io::Error::new(io::ErrorKind::Unsupported, format!("pixel size must have {num_components} bytes, but has {}", mem::size_of::<T>())));
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("pixel size must have {num_components} bytes, but has {}", mem::size_of::<T>()),
+            ));
         };
         let width = self.width();
         let height = self.height();
         let line_width = width * item_size;
         if dest.len() % line_width != 0 {
-            return Err(io::Error::new(io::ErrorKind::Unsupported, format!("destination slice length must be multiple of {width}x{num_components} bytes long, got {}B", std::mem::size_of_val(dest))));
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("destination slice length must be multiple of {width}x{num_components} bytes long, got {}B", std::mem::size_of_val(dest)),
+            ));
         }
         for row in dest.chunks_exact_mut(line_width) {
             if !self.can_read_more_scanlines() {
@@ -645,6 +653,7 @@ impl<R> DecompressStarted<R> {
         let mgr = self.dec.src_mgr.take().ok_or(io::ErrorKind::Other)?;
         Ok(mgr.into_inner())
     }
+
     #[inline]
     pub fn finish(mut self) -> io::Result<()> {
         self.finish_internal()
@@ -675,8 +684,7 @@ impl<R> Drop for Decompress<R> {
 
 #[test]
 fn read_incomplete_file() {
-    use crate::colorspace::ColorSpace;
-    use crate::colorspace::ColorSpaceExt;
+    use crate::colorspace::{ColorSpace, ColorSpaceExt};
     use std::fs::File;
     use std::io::Read;
 
@@ -747,8 +755,7 @@ fn file_trailer_bytes_left() {
 
 #[test]
 fn read_file() {
-    use crate::colorspace::ColorSpace;
-    use crate::colorspace::ColorSpaceExt;
+    use crate::colorspace::{ColorSpace, ColorSpaceExt};
     use std::fs::File;
     use std::io::Read;
 
@@ -801,8 +808,7 @@ fn read_file() {
 
 #[test]
 fn no_markers() {
-    use crate::colorspace::ColorSpace;
-    use crate::colorspace::ColorSpaceExt;
+    use crate::colorspace::{ColorSpace, ColorSpaceExt};
     use std::fs::File;
     use std::io::Read;
 
@@ -812,7 +818,7 @@ fn no_markers() {
     assert_eq!(0, dinfo.markers().count());
 
     let res = dinfo.rgb().unwrap().read_scanlines::<[u8; 3]>().unwrap();
-    assert_eq!(res.len(), 45*30);
+    assert_eq!(res.len(), 45 * 30);
 
     let dinfo = Decompress::builder().with_markers(&[]).from_path("tests/test.jpg").unwrap();
     assert_eq!(0, dinfo.markers().count());
@@ -859,8 +865,7 @@ fn buffer_into_inner() {
 
 #[test]
 fn read_file_rgb() {
-    use crate::colorspace::ColorSpace;
-    use crate::colorspace::ColorSpaceExt;
+    use crate::colorspace::{ColorSpace, ColorSpaceExt};
     use std::fs::File;
     use std::io::Read;
 
@@ -895,7 +900,9 @@ fn drops_reader() {
         }
     }
     impl<R: io::Read> io::Read for CountsDrops<'_, R> {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.reader.read(buf) }
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.reader.read(buf)
+        }
     }
     let mut drop_count = 0;
     let r = Decompress::builder().from_reader(BufReader::new(CountsDrops {

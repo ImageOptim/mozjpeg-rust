@@ -33,7 +33,7 @@ impl QTable {
     pub fn compare(&self, other: &Self) -> (f32, f32) {
         let mut scales = [0.; 64];
         for (s, (&a, &b)) in scales.iter_mut().zip(self.coeffs.iter().zip(other.coeffs.iter())) {
-            *s = if b > 0 {a as f32 / b as f32} else {0.};
+            *s = if b > 0 { a as f32 / b as f32 } else { 0. };
         }
         let avg = scales.iter().sum::<f32>() / 64.;
         let var = scales.iter().map(|&v| (v - avg).powi(2)).sum::<f32>() / 64.;

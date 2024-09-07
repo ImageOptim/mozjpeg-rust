@@ -10,7 +10,7 @@ pub enum Marker {
 }
 
 impl From<u8> for Marker {
-    fn from(num: u8) -> Marker {
+    fn from(num: u8) -> Self {
         if num == crate::ffi::jpeg_marker::COM as u8 {
             Self::COM
         } else {
