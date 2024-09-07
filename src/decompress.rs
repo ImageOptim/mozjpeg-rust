@@ -541,8 +541,10 @@ impl<R> DecompressStarted<R> {
         let mut image_dst: Vec<T> = Vec::new();
         let required_len = height * width * (num_components / mem::size_of::<T>());
         image_dst.try_reserve_exact(required_len).map_err(|_| io::ErrorKind::OutOfMemory)?;
-        unsafe { image_dst.extend_uninit(required_len); }
-        self.read_scanlines_into(&mut image_dst)?;
+        let read_len = self.read_scanlines_into_uninit(&mut image_dst.spare_capacity_mut()[..required_len])?.len();
+        if read_len <= required_len {
+            unsafe { image_dst.set_len(read_len); }
+        }
         Ok(image_dst)
     }
 
@@ -551,6 +553,14 @@ impl<R> DecompressStarted<R> {
     ///
     /// Allocation-less version of `read_scanlines`
     pub fn read_scanlines_into<'dest, T: Pod>(&mut self, dest: &'dest mut [T]) -> io::Result<&'dest mut [T]> {
+        let dest_uninit = unsafe {
+            std::mem::transmute::<&'dest mut [T], &'dest mut [MaybeUninit<T>]>(dest)
+        };
+        self.read_scanlines_into_uninit(dest_uninit)
+    }
+
+    /// Returns written-to slice
+    pub fn read_scanlines_into_uninit<'dest, T: Pod>(&mut self, dest: &'dest mut [MaybeUninit<T>]) -> io::Result<&'dest mut [T]> {
         let num_components = self.color_space().num_components();
         let item_size = if mem::size_of::<T>() == 1 {
             num_components
@@ -570,17 +580,20 @@ impl<R> DecompressStarted<R> {
                 return Err(io::ErrorKind::UnexpectedEof.into());
             }
             let start_line = self.dec.cinfo.output_scanline as usize;
-            let mut row_ptr = row.as_mut_ptr();
+            let mut row_ptr = row.as_mut_ptr().cast::<ffi::JSAMPLE>();
             let rows = std::ptr::addr_of_mut!(row_ptr);
             unsafe {
-                let rows_read = ffi::jpeg_read_scanlines(&mut self.dec.cinfo, rows.cast::<*mut u8>(), 1) as usize;
+                let rows_read = ffi::jpeg_read_scanlines(&mut self.dec.cinfo, rows, 1) as usize;
                 debug_assert_eq!(start_line + rows_read, self.dec.cinfo.output_scanline as usize, "{start_line}+{rows_read} != {} of {height}", self.dec.cinfo.output_scanline);
                 if 0 == rows_read {
                     return Err(io::ErrorKind::UnexpectedEof.into());
                 }
             }
         }
-        Ok(dest)
+        let dest_init = unsafe {
+            std::mem::transmute::<&'dest mut [MaybeUninit<T>], &'dest mut [T]>(dest)
+        };
+        Ok(dest_init)
     }
 
     #[deprecated(note = "use read_scanlines::<u8>")]
