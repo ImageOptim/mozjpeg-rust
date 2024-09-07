@@ -288,10 +288,10 @@ impl<W> CompressStarted<W> {
                 let mut row_ptrs = [[ptr::null::<u8>(); MAX_MCU_HEIGHT]; MAX_COMPONENTS];
                 let mut comp_ptrs = [ptr::null::<*const u8>(); MAX_COMPONENTS];
 
-                for (ci, comp_info) in self.components().iter().enumerate() {
+                for ((comp_info, image_src), (row_ptrs, comp_ptrs)) in self.components().iter().zip(image_src).zip(row_ptrs.iter_mut().zip(comp_ptrs.iter_mut())) {
                     let row_stride = comp_info.row_stride();
 
-                    let input_height = image_src[ci].len() / row_stride;
+                    let input_height = image_src.len() / row_stride;
 
                     let comp_start_row = start_row * comp_info.v_samp_factor as usize
                         / self.compress.cinfo.max_v_samp_factor as usize;
@@ -301,14 +301,11 @@ impl<W> CompressStarted<W> {
                     );
                     assert!(comp_height >= 8);
 
-                    for ri in 0..comp_height {
-                        let start_offset = (comp_start_row + ri) * row_stride;
-                        row_ptrs[ci][ri] = image_src[ci][start_offset .. start_offset + row_stride].as_ptr();
+                    // row_ptrs were initialized to null
+                    for (image_src, row_ptr) in image_src[comp_start_row..].chunks_exact(row_stride).zip(row_ptrs.iter_mut()).take(comp_height) {
+                        *row_ptr = image_src.as_ptr();
                     }
-                    for ri in comp_height..mcu_height {
-                        row_ptrs[ci][ri] = ptr::null();
-                    }
-                    comp_ptrs[ci] = row_ptrs[ci].as_ptr();
+                    *comp_ptrs = row_ptrs.as_ptr();
                 }
 
                 let rows_written = ffi::jpeg_write_raw_data(&mut self.compress.cinfo, comp_ptrs.as_ptr(), mcu_height as u32) as usize;

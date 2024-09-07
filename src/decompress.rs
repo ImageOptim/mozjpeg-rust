@@ -507,11 +507,10 @@ impl<R> DecompressStarted<R> {
                 let required_len = comp_height * row_stride;
                 comp_dest.try_reserve(required_len).expect("oom");
                 let comp_dest = &mut comp_dest.spare_capacity_mut()[..required_len];
-                for (row_ptr, comp_dest) in row_ptrs.iter_mut().zip(comp_dest.chunks_exact_mut(row_stride)) {
+
+                // row_ptrs were initialized to null
+                for (row_ptr, comp_dest) in row_ptrs.iter_mut().zip(comp_dest.chunks_exact_mut(row_stride)).take(comp_height) {
                     *row_ptr = comp_dest.as_mut_ptr().cast();
-                }
-                for row_ptr in &mut row_ptrs[comp_height..mcu_height] {
-                    *row_ptr = ptr::null_mut();
                 }
                 *comp_ptrs = row_ptrs.as_mut_ptr();
             }
