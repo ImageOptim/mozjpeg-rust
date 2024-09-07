@@ -10,7 +10,7 @@ license = "IJG"
 name = "mozjpeg"
 readme = "README.md"
 repository = "https://github.com/ImageOptim/mozjpeg-rust"
-version = "0.10.9"
+version = "0.10.10"
 edition = "2021"
 rust-version = "1.71"
 
@@ -19,7 +19,7 @@ libc = "0.2.155"
 mozjpeg-sys = { version = "2.2.0", default-features = false, features = ["unwinding"] }
 rgb = { version = "0.8.47", default-features = false, features = ["bytemuck"] }
 arrayvec = "0.7.4"
-bytemuck = "1.16.1"
+bytemuck = { version = "1.17", default-features = false, features = ["min_const_generics", "align_offset"] }
 
 [features]
 default = ["mozjpeg-sys/default"]
