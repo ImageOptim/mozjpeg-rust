@@ -17,6 +17,7 @@ use std::io::Write;
 use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
 use std::os::raw::{c_int, c_long, c_uint};
+use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::ptr;
 
 pub(crate) struct DestinationMgr<W> {
@@ -26,6 +27,9 @@ pub(crate) struct DestinationMgr<W> {
     ///   This requires interior mutability and a non-exclusive ownership (`Box<UnsafeCell>` would be useless).
     inner_shared: *mut UnsafeCell<DestinationMgrInner<W>>,
 }
+
+impl<W: UnwindSafe> UnwindSafe for DestinationMgr<W> {}
+impl<W: RefUnwindSafe> RefUnwindSafe for DestinationMgr<W> {}
 
 #[repr(C)]
 struct DestinationMgrInner<W> {

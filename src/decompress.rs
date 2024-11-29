@@ -1,5 +1,4 @@
 //! See the `Decompress` struct instead. You don't need to use this module directly.
-use std::mem::MaybeUninit;
 use bytemuck::Pod;
 use crate::{colorspace::ColorSpace, PixelDensity};
 use crate::colorspace::ColorSpaceExt;
@@ -22,6 +21,7 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::marker::PhantomData;
 use std::mem;
+use std::mem::MaybeUninit;
 use std::os::raw::{c_int, c_uchar, c_ulong, c_void};
 use std::path::Path;
 use std::ptr;

@@ -10,6 +10,7 @@ use std::io::{self, BufRead, BufReader, Read};
 use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
 use std::os::raw::{c_int, c_long, c_uint, c_void};
+use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::ptr;
 use std::ptr::NonNull;
 
@@ -20,6 +21,9 @@ pub(crate) struct SourceMgr<R> {
     ///   This requires interior mutability and a non-exclusive ownership (`Box<UnsafeCell>` would be useless).
     inner_shared: *mut UnsafeCell<SourceMgrInner<R>>,
 }
+
+impl<R: UnwindSafe> UnwindSafe for SourceMgr<R> {}
+impl<R: RefUnwindSafe> RefUnwindSafe for SourceMgr<R> {}
 
 #[repr(C)]
 pub(crate) struct SourceMgrInner<R> {
@@ -228,5 +232,4 @@ impl<R: BufRead> SourceMgrInner<R> {
         let this = Self::cast(cinfo);
         this.return_unconsumed_data();
     }
-
 }
