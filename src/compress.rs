@@ -190,6 +190,9 @@ impl<W> CompressStarted<W> {
 impl Compress {
     /// Expose components for modification, e.g. to set chroma subsampling
     pub fn components_mut(&mut self) -> &mut [CompInfo] {
+        if self.cinfo.comp_info.is_null() {
+            return &mut [];
+        }
         unsafe {
             slice::from_raw_parts_mut(self.cinfo.comp_info, self.cinfo.num_components as usize)
         }
@@ -198,7 +201,12 @@ impl Compress {
     /// Read-only view of component information
     #[must_use]
     pub fn components(&self) -> &[CompInfo] {
-        unsafe { slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize) }
+        if self.cinfo.comp_info.is_null() {
+            return &[];
+        }
+        unsafe {
+            slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize)
+        }
     }
 }
 

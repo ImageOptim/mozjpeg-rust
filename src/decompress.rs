@@ -259,6 +259,9 @@ impl<R> Decompress<R> {
     #[inline]
     #[must_use]
     pub fn components(&self) -> &[CompInfo] {
+        if self.cinfo.comp_info.is_null() {
+            return &[];
+        }
         unsafe {
             slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize)
         }
@@ -266,6 +269,9 @@ impl<R> Decompress<R> {
 
     #[inline]
     pub(crate) fn components_mut(&mut self) -> &mut [CompInfo] {
+        if self.cinfo.comp_info.is_null() {
+            return &mut [];
+        }
         unsafe {
             slice::from_raw_parts_mut(self.cinfo.comp_info, self.cinfo.num_components as usize)
         }
