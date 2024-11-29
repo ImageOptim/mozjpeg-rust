@@ -68,6 +68,9 @@ impl<W: Write> DestinationMgr<W> {
     /// Must be called after `term_destination`
     pub fn into_inner(mut self) -> W {
         unsafe {
+            #[cfg(debug_assertions)]
+            self.poison_jpeg_destination_mgr();
+
             let inner = std::mem::replace(&mut self.inner_shared, ptr::null_mut());
             Box::from_raw(inner).into_inner().writer
         }
@@ -82,12 +85,33 @@ impl<W> DestinationMgr<W> {
             ptr::addr_of_mut!((*UnsafeCell::raw_get(self.inner_shared)).iface)
         }
     }
+
+    /// Make any further use by libjpeg cause a crash
+    #[cfg(debug_assertions)]
+    unsafe fn poison_jpeg_destination_mgr(&mut self) {
+        extern "C-unwind" fn crash(_: &mut jpeg_compress_struct) {
+            panic!("cinfo.dest dangling");
+        }
+        extern "C-unwind" fn crash_i(cinfo: &mut jpeg_compress_struct) -> i32 {
+            crash(cinfo); 0
+        }
+        ptr::write_volatile(self.iface_c_ptr(), jpeg_destination_mgr {
+            next_output_byte: ptr::NonNull::dangling().as_ptr(),
+            free_in_buffer: !0,
+            init_destination: Some(crash),
+            empty_output_buffer: Some(crash_i),
+            term_destination: Some(crash)
+        });
+    }
 }
 
 impl<W> Drop for DestinationMgr<W> {
     fn drop(&mut self) {
         if !self.inner_shared.is_null() {
             unsafe {
+                #[cfg(debug_assertions)]
+                self.poison_jpeg_destination_mgr();
+
                 let _ = Box::from_raw(self.inner_shared);
             }
         }
