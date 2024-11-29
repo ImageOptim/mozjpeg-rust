@@ -53,7 +53,8 @@ pub enum ScanMode {
 
 pub struct CompressStarted<W> {
     compress: Compress,
-    dest_mgr: Box<DestinationMgr<W>>,
+    /// Safety: sensitive to drop order. Needs to be dropped after `Compress`
+    dest_mgr: DestinationMgr<W>,
 }
 
 impl Compress {
@@ -117,11 +118,10 @@ impl Compress {
 
         let mut started = CompressStarted {
             compress: self,
-            dest_mgr: Box::new(DestinationMgr::new(writer, write_buffer_capacity)),
+            dest_mgr: DestinationMgr::new(writer, write_buffer_capacity),
         };
         unsafe {
-            let dest_ptr = addr_of_mut!(started.dest_mgr.as_mut().iface);
-            started.compress.cinfo.dest = dest_ptr;
+            started.compress.cinfo.dest = started.dest_mgr.iface_c_ptr();
             ffi::jpeg_start_compress(&mut started.compress.cinfo, boolean::from(true));
         }
         Ok(started)

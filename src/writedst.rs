@@ -10,17 +10,26 @@ use mozjpeg_sys::JERR_INPUT_EOF;
 use mozjpeg_sys::JWRN_JPEG_EOF;
 use mozjpeg_sys::J_MESSAGE_CODE;
 use mozjpeg_sys::{JPOOL_IMAGE, JPOOL_PERMANENT};
+use std::cell::UnsafeCell;
 use std::io;
 use std::io::Write;
 use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
-use std::ptr;
 use std::os::raw::{c_int, c_long, c_uint};
-use std::ptr::NonNull;
+use std::ptr;
+
+pub(crate) struct DestinationMgr<W> {
+    /// The `jpeg_destination_mgr` has requirements that are tricky for Rust:
+    /// * it must have a stable address,
+    /// * it is mutated via `cinfo.dest` raw pointer via C, while the `DestinationMgr` stored elsewhere owns it.
+    ///   This requires interior mutability and a non-exclusive ownership (`Box<UnsafeCell>` would be useless).
+    inner_shared: *mut UnsafeCell<DestinationMgrInner<W>>,
+}
 
 #[repr(C)]
-pub(crate) struct DestinationMgr<W> {
-    pub(crate) iface: jpeg_destination_mgr,
+struct DestinationMgrInner<W> {
+    /// The `iface` is mutably aliased by C code. Must be the first field.
+    iface: jpeg_destination_mgr,
     buf: Vec<u8>,
     writer: W,
     // jpeg_destination_mgr callbacks get a pointer to the struct
@@ -31,25 +40,61 @@ impl<W: Write> DestinationMgr<W> {
     #[inline]
     pub fn new(writer: W, capacity: usize) -> Self {
         Self {
-            iface: jpeg_destination_mgr {
-                next_output_byte: ptr::null_mut(),
-                free_in_buffer: 0,
-                init_destination: Some(Self::init_destination),
-                empty_output_buffer: Some(Self::empty_output_buffer),
-                term_destination: Some(Self::term_destination),
-            },
-            // BufWriter doesn't expose unwritten buffer
-            buf: Vec::with_capacity(if capacity > 0 { capacity.min(i32::MAX as usize) } else { 4096 }),
-            writer,
-            _pinned: PhantomPinned,
+            inner_shared: Box::into_raw(Box::new(UnsafeCell::new(
+                DestinationMgrInner {
+                    iface: jpeg_destination_mgr {
+                        next_output_byte: ptr::null_mut(),
+                        free_in_buffer: 0,
+                        init_destination: Some(DestinationMgrInner::<W>::init_destination),
+                        empty_output_buffer: Some(DestinationMgrInner::<W>::empty_output_buffer),
+                        term_destination: Some(DestinationMgrInner::<W>::term_destination),
+                    },
+                    // Can't use BufWriter, because it doesn't expose the unwritten buffer
+                    buf: Vec::with_capacity(if capacity > 0 { capacity.min(i32::MAX as usize) } else { 4096 }),
+                    writer,
+                    _pinned: PhantomPinned,
+                },
+            ))),
+        }
+    }
+
+    #[cfg(test)]
+    fn iface(&mut self) -> &mut jpeg_destination_mgr {
+        unsafe {
+            &mut (*UnsafeCell::raw_get(self.inner_shared)).iface
         }
     }
 
     /// Must be called after `term_destination`
-    pub fn into_inner(self) -> W {
-        self.writer
+    pub fn into_inner(mut self) -> W {
+        unsafe {
+            let inner = std::mem::replace(&mut self.inner_shared, ptr::null_mut());
+            Box::from_raw(inner).into_inner().writer
+        }
     }
+}
 
+impl<W> DestinationMgr<W> {
+    /// Safety: `DestinationMgr` can only be dropped after `cinfo.dest` is set to NULL
+    pub unsafe fn iface_c_ptr(&mut self) -> *mut jpeg_destination_mgr {
+        debug_assert!(!self.inner_shared.is_null());
+        unsafe {
+            ptr::addr_of_mut!((*UnsafeCell::raw_get(self.inner_shared)).iface)
+        }
+    }
+}
+
+impl<W> Drop for DestinationMgr<W> {
+    fn drop(&mut self) {
+        if !self.inner_shared.is_null() {
+            unsafe {
+                let _ = Box::from_raw(self.inner_shared);
+            }
+        }
+    }
+}
+
+impl<W: Write> DestinationMgrInner<W> {
     fn reset_buffer(&mut self) {
         self.buf.clear();
         let spare_capacity = self.buf.spare_capacity_mut();
@@ -73,14 +118,18 @@ impl<W: Write> DestinationMgr<W> {
     }
 
     unsafe fn cast(cinfo: &mut jpeg_compress_struct) -> &mut Self {
-        let this: &mut Self = &mut *cinfo.dest.cast();
-        // Type alias to unify higher-ranked lifetimes
-        type FnPtr<'a> = unsafe extern "C-unwind" fn(cinfo: &'a mut jpeg_compress_struct);
-        // This is a redundant safety check to ensure the struct is ours
-        if Some::<FnPtr>(Self::init_destination) != this.iface.init_destination {
-            fail(&mut cinfo.common, JERR_BUFFER_SIZE);
+        if let Some(maybe_aliased_dest) = cinfo.dest.cast::<UnsafeCell<Self>>().as_ref() {
+            // UnsafeCell is intentionally accessed via shared reference. The libjpeg library is single-threaded,
+            // so while there are other pointers to the cell, they're not used concurrently.
+            let this = maybe_aliased_dest.get();
+            // Type alias to unify higher-ranked lifetimes
+            type FnPtr<'a> = unsafe extern "C-unwind" fn(cinfo: &'a mut jpeg_compress_struct);
+            // This is a redundant safety check to ensure the struct is ours
+            if Some::<FnPtr>(Self::init_destination) == (*this).iface.init_destination {
+                return &mut *this;
+            }
         }
-        this
+        fail(&mut cinfo.common, JERR_BUFFER_SIZE);
     }
 
     /// This is called by `jcphuff`'s `dump_buffer()`, which does NOT keep
@@ -94,8 +143,7 @@ impl<W: Write> DestinationMgr<W> {
     }
 
     unsafe extern "C-unwind" fn init_destination(cinfo: &mut jpeg_compress_struct) {
-        let this = Self::cast(cinfo);
-        this.reset_buffer();
+        Self::cast(cinfo).reset_buffer();
     }
 
     unsafe extern "C-unwind" fn term_destination(cinfo: &mut jpeg_compress_struct) {
@@ -113,38 +161,43 @@ impl<W: Write> DestinationMgr<W> {
 #[test]
 fn w() {
     for any_write_first in [true, false] {
-    for capacity in [0,1,2,3,5,10,255,256,4096] {
-        let mut w = DestinationMgr::new(Vec::new(), capacity);
-        let mut expected = Vec::new();
-        unsafe {
-            let mut j: jpeg_compress_struct = std::mem::zeroed();
-            j.dest = &mut w.iface;
-            (w.iface.init_destination.unwrap())(&mut j);
-            assert!(w.iface.free_in_buffer > 0);
-            if any_write_first {
-                while w.iface.free_in_buffer > 0 {
-                    expected.push(123);
-                    *w.iface.next_output_byte = 123;
-                    w.iface.next_output_byte = w.iface.next_output_byte.add(1);
-                    w.iface.free_in_buffer -= 1;
+        for capacity in [0,1,2,3,5,10,255,256,4096] {
+            let mut w = DestinationMgr::new(Vec::new(), capacity);
+            let mut expected = Vec::new();
+            unsafe {
+                let init_destination = w.iface().init_destination.unwrap();
+                let empty_output_buffer = w.iface().empty_output_buffer.unwrap();
+                let term_destination = w.iface().term_destination.unwrap();
+
+                let mut j: jpeg_compress_struct = std::mem::zeroed();
+                j.dest = w.iface_c_ptr();
+                (init_destination)(&mut j);
+                assert!(w.iface().free_in_buffer > 0);
+                if any_write_first {
+                    while w.iface().free_in_buffer > 0 {
+                        expected.push(123);
+                        *w.iface().next_output_byte = 123;
+                        w.iface().next_output_byte = w.iface().next_output_byte.add(1);
+                        w.iface().free_in_buffer -= 1;
+                    }
+                    (empty_output_buffer)(&mut j);
+                    assert!(w.iface().free_in_buffer > 0);
+                    let slice = std::slice::from_raw_parts_mut(w.iface().next_output_byte, w.iface().free_in_buffer);
+                    slice.iter_mut().enumerate().for_each(|(i, s)| *s = i as u8);
+                    expected.extend_from_slice(slice);
+                    w.iface().next_output_byte = w.iface().next_output_byte.add(1); // yes, can be invalid!
+                    w.iface().free_in_buffer = 999; // yes, can be invalid!
+                    (empty_output_buffer)(&mut j);
+                    assert!(w.iface().free_in_buffer > 0);
                 }
-                (w.iface.empty_output_buffer.unwrap())(&mut j);
-                assert!(w.iface.free_in_buffer > 0);
-                let slice = std::slice::from_raw_parts_mut(w.iface.next_output_byte, w.iface.free_in_buffer);
-                slice.iter_mut().enumerate().for_each(|(i, s)| *s = i as u8);
+                let slice = std::slice::from_raw_parts_mut(w.iface().next_output_byte, w.iface().free_in_buffer-1);
+                slice.iter_mut().enumerate().for_each(|(i, s)| *s = (i*17) as u8);
                 expected.extend_from_slice(slice);
-                w.iface.next_output_byte = w.iface.next_output_byte.add(1); // yes, can be invalid!
-                w.iface.free_in_buffer = 999; // yes, can be invalid!
-                (w.iface.empty_output_buffer.unwrap())(&mut j);
-                assert!(w.iface.free_in_buffer > 0);
+                w.iface().next_output_byte = w.iface().next_output_byte.add(slice.len());
+                w.iface().free_in_buffer -= slice.len(); // now must be valid
+                (term_destination)(&mut j);
+                assert_eq!(expected, w.into_inner());
             }
-            let slice = std::slice::from_raw_parts_mut(w.iface.next_output_byte, w.iface.free_in_buffer-1);
-            slice.iter_mut().enumerate().for_each(|(i, s)| *s = (i*17) as u8);
-            expected.extend_from_slice(slice);
-            w.iface.next_output_byte = w.iface.next_output_byte.add(slice.len());
-            w.iface.free_in_buffer -= slice.len(); // now must be valid
-            (w.iface.term_destination.unwrap())(&mut j);
-            assert_eq!(expected, w.into_inner());
         }
-    }}
+    }
 }
