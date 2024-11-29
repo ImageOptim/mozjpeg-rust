@@ -38,7 +38,7 @@ fn formatted_message(prefix: &str, cinfo: &mut jpeg_common_struct) -> String {
 }
 
 fn push_str_in_cap(out: &mut String, s: &str) {
-    let needs_to_grow = s.as_bytes().len() > out.capacity().wrapping_sub(out.len());
+    let needs_to_grow = s.len() > out.capacity().wrapping_sub(out.len());
     if !needs_to_grow {
         out.push_str(s);
     }

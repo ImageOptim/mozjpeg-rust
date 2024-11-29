@@ -53,7 +53,7 @@ fn recompress() {
 
     assert_eq!(1.0, dinfo.gamma());
     assert_eq!(ColorSpace::JCS_YCbCr, dinfo.color_space());
-    assert_eq!(dinfo.components().len(), dinfo.color_space().num_components() as usize);
+    assert_eq!(dinfo.components().len(), dinfo.color_space().num_components());
 
     let samp_factors = dinfo.components().iter().map(|c| c.v_samp_factor).collect::<Vec<_>>();
 
