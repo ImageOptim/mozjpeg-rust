@@ -243,9 +243,8 @@ impl<R> Decompress<R> {
                 src_mgr: Some(src_mgr),
                 err_mgr,
             };
-            let src_ptr = addr_of_mut!(newself.src_mgr.as_mut().unwrap().iface);
-            let err_ptr = addr_of_mut!(*newself.err_mgr);
-            newself.cinfo.common.err = err_ptr;
+            let src_ptr = newself.src_mgr.as_mut().unwrap().iface_c_ptr();
+            newself.cinfo.common.err = addr_of_mut!(*newself.err_mgr);
             ffi::jpeg_create_decompress(&mut newself.cinfo);
             newself.cinfo.src = src_ptr;
             for &marker in builder.save_markers {

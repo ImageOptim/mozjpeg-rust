@@ -7,6 +7,7 @@ use mozjpeg_sys::jpeg_destination_mgr;
 use mozjpeg_sys::JERR_BUFFER_SIZE;
 use mozjpeg_sys::JERR_FILE_WRITE;
 use mozjpeg_sys::JERR_INPUT_EOF;
+use mozjpeg_sys::JERR_VIRTUAL_BUG;
 use mozjpeg_sys::JWRN_JPEG_EOF;
 use mozjpeg_sys::J_MESSAGE_CODE;
 use mozjpeg_sys::{JPOOL_IMAGE, JPOOL_PERMANENT};
@@ -92,7 +93,7 @@ impl<W> DestinationMgr<W> {
         extern "C-unwind" fn crash(_: &mut jpeg_compress_struct) {
             panic!("cinfo.dest dangling");
         }
-        extern "C-unwind" fn crash_i(cinfo: &mut jpeg_compress_struct) -> i32 {
+        extern "C-unwind" fn crash_i(cinfo: &mut jpeg_compress_struct) -> boolean {
             crash(cinfo); 0
         }
         ptr::write_volatile(self.iface_c_ptr(), jpeg_destination_mgr {
@@ -153,7 +154,7 @@ impl<W: Write> DestinationMgrInner<W> {
                 return &mut *this;
             }
         }
-        fail(&mut cinfo.common, JERR_BUFFER_SIZE);
+        fail(&mut cinfo.common, JERR_VIRTUAL_BUG);
     }
 
     /// This is called by `jcphuff`'s `dump_buffer()`, which does NOT keep
