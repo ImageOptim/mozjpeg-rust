@@ -140,6 +140,7 @@ impl<R: BufRead> SourceMgrInner<R> {
         fail(&mut cinfo.common, JERR_VIRTUAL_BUG);
     }
 
+    #[inline(never)]
     unsafe extern "C-unwind" fn init_source(cinfo: &mut jpeg_decompress_struct) {
         // Do nothing, buffer has been filled by new()
         let _s = Self::cast(cinfo);
@@ -181,6 +182,7 @@ impl<R: BufRead> SourceMgrInner<R> {
     /// In typical applications, it should read fresh data
     ///    into the buffer (ignoring the current state of `next_input_byte` and
     ///    `bytes_in_buffer`)
+    #[inline(never)]
     unsafe extern "C-unwind" fn fill_input_buffer(cinfo: &mut jpeg_decompress_struct) -> boolean {
         let this = Self::cast(cinfo);
         match this.fill_input_buffer_impl() {
@@ -198,6 +200,7 @@ impl<R: BufRead> SourceMgrInner<R> {
     }
 
     /// libjpeg makes `bytes_in_buffer` up to date before calling this
+    #[inline(never)]
     unsafe extern "C-unwind" fn skip_input_data(cinfo: &mut jpeg_decompress_struct, num_bytes: c_long) {
         if num_bytes <= 0 {
             return;
@@ -228,6 +231,7 @@ impl<R: BufRead> SourceMgrInner<R> {
     }
 
     /// `jpeg_finish_decompress` consumes data up to EOI before calling this
+    #[inline(never)]
     unsafe extern "C-unwind" fn term_source(cinfo: &mut jpeg_decompress_struct) {
         let this = Self::cast(cinfo);
         this.return_unconsumed_data();

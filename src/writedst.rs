@@ -163,6 +163,7 @@ impl<W: Write> DestinationMgrInner<W> {
 
     /// This is called by `jcphuff`'s `dump_buffer()`, which does NOT keep
     /// the position up to date, and expects full buffer write every time.
+    #[inline(never)]
     unsafe extern "C-unwind" fn empty_output_buffer(cinfo: &mut jpeg_compress_struct) -> boolean {
         let this = Self::cast(cinfo);
         if let Err(code) = this.write_buffer(true) {
@@ -171,10 +172,12 @@ impl<W: Write> DestinationMgrInner<W> {
         1
     }
 
+    #[inline(never)]
     unsafe extern "C-unwind" fn init_destination(cinfo: &mut jpeg_compress_struct) {
         Self::cast(cinfo).reset_buffer();
     }
 
+    #[inline(never)]
     unsafe extern "C-unwind" fn term_destination(cinfo: &mut jpeg_compress_struct) {
         let this = Self::cast(cinfo);
         if let Err(code) = this.write_buffer(false) {
