@@ -1,7 +1,7 @@
 use mozjpeg::*;
+use std::sync::LazyLock;
 
-#[test]
-fn decode_test_rgb() {
+static RGB: LazyLock<Vec<[u8; 3]>> = LazyLock::new(|| {
     let d = Decompress::with_markers(ALL_MARKERS)
         .from_path("tests/test.jpg")
         .unwrap();
@@ -17,8 +17,8 @@ fn decode_test_rgb() {
     assert_eq!(30, image.height());
     assert_eq!(ColorSpace::JCS_RGB, image.color_space());
 
-    let _buf = image.read_scanlines::<[u8; 3]>().unwrap();
-}
+    image.read_scanlines::<[u8; 3]>().unwrap()
+});
 
 #[test]
 fn decode_test_rgba() {
@@ -37,7 +37,29 @@ fn decode_test_rgba() {
     assert_eq!(30, image.height());
     assert_eq!(ColorSpace::JCS_EXT_RGBA, image.color_space());
 
-    let _buf = image.read_scanlines::<[u8; 4]>().unwrap();
+    let rgba = image.read_scanlines::<[u8; 4]>().unwrap();
+    assert!(rgba.iter().map(|px| &px[..3]).eq(RGB.iter()));
+}
+
+#[test]
+fn decode_test_argb() {
+    let d = Decompress::with_markers(ALL_MARKERS)
+        .from_path("tests/test.jpg")
+        .unwrap();
+
+    assert_eq!(45, d.width());
+    assert_eq!(30, d.height());
+    assert_eq!(1.0, d.gamma());
+    assert_eq!(ColorSpace::JCS_YCbCr, d.color_space());
+    assert_eq!(1, d.markers().count());
+
+    let mut image = d.to_colorspace(ColorSpace::JCS_EXT_ARGB).unwrap();
+    assert_eq!(45, image.width());
+    assert_eq!(30, image.height());
+    assert_eq!(ColorSpace::JCS_EXT_ARGB, image.color_space());
+
+    let rgba = image.read_scanlines::<[u8; 4]>().unwrap();
+    assert!(rgba.iter().map(|px| &px[1..]).eq(RGB.iter()));
 }
 
 #[test]
@@ -61,28 +83,34 @@ fn decode_test_rgb_flat() {
     let buf = image.read_scanlines::<u8>().unwrap();
 
     assert_eq!(buf.len(), buf_size);
+
+    assert!(buf.chunks_exact(3).eq(RGB.iter()));
 }
 
 #[test]
 fn decode_test_rgba_flat() {
-    let d = Decompress::with_markers(ALL_MARKERS)
-        .from_path("tests/test.jpg")
-        .unwrap();
+    for space in [ColorSpace::JCS_EXT_RGBA, ColorSpace::JCS_EXT_RGBX] {
+        let d = Decompress::with_markers(ALL_MARKERS)
+            .from_path("tests/test.jpg")
+            .unwrap();
 
-    assert_eq!(45, d.width());
-    assert_eq!(30, d.height());
-    assert_eq!(1.0, d.gamma());
-    assert_eq!(ColorSpace::JCS_YCbCr, d.color_space());
-    assert_eq!(1, d.markers().count());
+        assert_eq!(45, d.width());
+        assert_eq!(30, d.height());
+        assert_eq!(1.0, d.gamma());
+        assert_eq!(ColorSpace::JCS_YCbCr, d.color_space());
+        assert_eq!(1, d.markers().count());
 
-    let mut image = d.rgba().unwrap();
-    assert_eq!(45, image.width());
-    assert_eq!(30, image.height());
-    assert_eq!(ColorSpace::JCS_EXT_RGBA, image.color_space());
+        let mut image = d.to_colorspace(space).unwrap();
+        assert_eq!(45, image.width());
+        assert_eq!(30, image.height());
+        assert_eq!(space, image.color_space());
 
-    let buf_size = image.min_flat_buffer_size();
-    let buf = image.read_scanlines::<u8>().unwrap();
-    assert_eq!(buf.len(), buf_size);
+        let buf_size = image.min_flat_buffer_size();
+        let buf = image.read_scanlines::<u8>().unwrap();
+        assert_eq!(buf.len(), buf_size);
+
+        assert!(buf.chunks_exact(4).map(|px| &px[..3]).eq(RGB.iter()));
+    }
 }
 
 #[test]
