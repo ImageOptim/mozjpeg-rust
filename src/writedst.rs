@@ -154,6 +154,8 @@ impl<W: Write> DestinationMgrInner<W> {
             // Type alias to unify higher-ranked lifetimes
             type FnPtr<'a> = unsafe extern "C-unwind" fn(cinfo: &'a mut jpeg_compress_struct);
             // This is a redundant safety check to ensure the struct is ours
+            #[allow(unknown_lints)]
+            #[allow(unpredictable_function_pointer_comparisons)] // it's the same pointer from the same unit
             if Some::<FnPtr>(Self::init_destination) == (*this).iface.init_destination {
                 return &mut *this;
             }
