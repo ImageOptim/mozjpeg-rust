@@ -286,7 +286,6 @@ impl<W> CompressStarted<W> {
         while self.can_write_more_lines() {
             unsafe {
                 let mut row_ptrs = [[ptr::null::<u8>(); MAX_MCU_HEIGHT]; MAX_COMPONENTS];
-                let mut comp_ptrs = [ptr::null::<*const u8>(); MAX_COMPONENTS];
 
                 for ((comp_info, image_src), (row_ptrs, comp_ptrs)) in self.components().iter().zip(image_src).zip(row_ptrs.iter_mut().zip(comp_ptrs.iter_mut())) {
                     let row_stride = comp_info.row_stride();
@@ -305,9 +304,9 @@ impl<W> CompressStarted<W> {
                     for (image_src, row_ptr) in image_src[comp_start_row..].chunks_exact(row_stride).zip(row_ptrs.iter_mut()).take(comp_height) {
                         *row_ptr = image_src.as_ptr();
                     }
-                    *comp_ptrs = row_ptrs.as_ptr();
                 }
 
+                let comp_ptrs: [*const *const u8; MAX_COMPONENTS] = std::array::from_fn(|ci| row_ptrs[ci].as_ptr());
                 let rows_written = ffi::jpeg_write_raw_data(&mut self.compress.cinfo, comp_ptrs.as_ptr(), mcu_height as u32) as usize;
                 if 0 == rows_written {
                     return false;
