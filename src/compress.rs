@@ -287,7 +287,7 @@ impl<W> CompressStarted<W> {
             unsafe {
                 let mut row_ptrs = [[ptr::null::<u8>(); MAX_MCU_HEIGHT]; MAX_COMPONENTS];
 
-                for ((comp_info, image_src), (row_ptrs, comp_ptrs)) in self.components().iter().zip(image_src).zip(row_ptrs.iter_mut().zip(comp_ptrs.iter_mut())) {
+                for ((comp_info, &image_src), comp_row_ptrs) in self.components().iter().zip(image_src).zip(row_ptrs.iter_mut()) {
                     let row_stride = comp_info.row_stride();
 
                     let input_height = image_src.len() / row_stride;
@@ -301,8 +301,8 @@ impl<W> CompressStarted<W> {
                     assert!(comp_height >= 8);
 
                     // row_ptrs were initialized to null
-                    for (image_src, row_ptr) in image_src[comp_start_row..].chunks_exact(row_stride).zip(row_ptrs.iter_mut()).take(comp_height) {
-                        *row_ptr = image_src.as_ptr();
+                    for (src_row, row_ptr) in image_src.chunks_exact(row_stride).skip(comp_start_row).take(comp_height).zip(comp_row_ptrs.iter_mut()) {
+                        *row_ptr = src_row.as_ptr();
                     }
                 }
 
