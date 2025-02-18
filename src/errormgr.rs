@@ -23,8 +23,11 @@ fn formatted_message(prefix: &str, cinfo: &mut jpeg_common_struct) -> String {
         let err = cinfo.err.as_ref().unwrap();
         match err.format_message {
             Some(fmt) => {
-                let buffer = mem::zeroed();
-                fmt(cinfo, &buffer);
+                let mut buffer = mem::zeroed();
+                let correct_fn_type = mem::transmute::<
+                    unsafe extern "C-unwind" fn(cinfo: &mut jpeg_common_struct, buffer: &[u8; 80]),
+                    unsafe extern "C-unwind" fn(cinfo: &mut jpeg_common_struct, buffer: &mut [u8; 80])>(fmt);
+                (correct_fn_type)(cinfo, &mut buffer);
                 let buf = buffer.split(|&c| c == 0).next().unwrap_or_default();
                 let msg = String::from_utf8_lossy(buf);
                 let mut out = String::with_capacity(prefix.len() + msg.len());
