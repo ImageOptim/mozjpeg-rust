@@ -45,9 +45,14 @@ pub struct Compress {
 
 #[derive(Copy, Clone)]
 pub enum ScanMode {
+    /// Encode all color channels in each scan pass. Produces the best visual
+    /// experience during progressive loading — the image sharpens uniformly.
     AllComponentsTogether = 0,
-    /// Can flash grayscale or green-tinted images
+    /// Encode each color channel in a separate scan pass. During progressive
+    /// loading, this can cause the image to flash grayscale or appear
+    /// green-tinted before all channels arrive.
     ScanPerComponent = 1,
+    /// Let MozJPEG decide the scan layout automatically.
     Auto = 2,
 }
 
@@ -58,7 +63,10 @@ pub struct CompressStarted<W> {
 }
 
 impl Compress {
-    /// Compress image using input in this colorspace.
+    /// Compress image using the given *input* color space.
+    /// The output JPEG color space defaults to a sensible match
+    /// (e.g., RGB→YCbCr, Grayscale→Grayscale), but can be overridden with
+    /// [`set_color_space()`](Self::set_color_space).
     ///
     /// ## Panics
     ///
@@ -261,7 +269,8 @@ impl<W> CompressStarted<W> {
     }
 
     /// Advanced. Only possible after `set_raw_data_in()`.
-    /// Write YCbCr blocks pixels instead of usual color space
+    /// Write pre-downsampled component planes (typically YCbCr) directly,
+    /// bypassing the encoder's color conversion and downsampling.
     ///
     /// See `raw_data_in` in libjpeg docs
     ///
@@ -328,7 +337,9 @@ impl<W> CompressStarted<W> {
 }
 
 impl Compress {
-    /// Set color space of JPEG being written, different from input color space.
+    /// Set the *output* color space of the JPEG being written. This can differ
+    /// from the input color space set in [`new()`](Self::new) — libjpeg handles
+    /// the conversion automatically (e.g., RGB input → YCbCr output).
     ///
     /// This resets all per-component settings to colorspace defaults:
     /// sampling factors, quantization table assignments, and Huffman table assignments.
@@ -368,7 +379,9 @@ impl Compress {
         self.cinfo.Y_density = density.y;
     }
 
-    /// If true, it will use MozJPEG's scan optimization. Makes progressive image files smaller.
+    /// If `true`, MozJPEG will try multiple progressive scan configurations and
+    /// pick the one that compresses best. This can noticeably reduce file size
+    /// for progressive JPEGs, at the cost of slower encoding.
     ///
     /// Reset by both
     /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode) (→ `true`) and
@@ -383,7 +396,9 @@ impl Compress {
         }
     }
 
-    /// If 1-100 (non-zero), it will use MozJPEG's smoothing.
+    /// Apply inter-block smoothing to reduce blocky artifacts in the output.
+    /// Values range from 0 (no smoothing, the default) to 100 (maximum).
+    /// Higher values reduce visible block boundaries but may soften fine detail.
     ///
     /// This value is silently reset to 0 by
     /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode) and
@@ -395,6 +410,11 @@ impl Compress {
 
     /// Set to `false` to make files larger for no reason
     ///
+    /// Enable optimized Huffman coding. When `true` (the default in MozJPEG),
+    /// the encoder computes custom Huffman tables from the actual image data,
+    /// typically reducing file size by 2–10%. When `false`, it uses fixed
+    /// default tables, which produce larger files.
+    ///
     /// Reset by both
     /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode) (→ `true`) and
     /// [`set_fastest_defaults()`](Self::set_fastest_defaults) (→ `false`).
@@ -403,8 +423,11 @@ impl Compress {
         self.cinfo.optimize_coding = boolean::from(opt);
     }
 
-    /// Specifies whether multiple scans should be considered during trellis
-    /// quantization.
+    /// Specifies whether multiple scan configurations should be evaluated
+    /// during trellis quantization. Trellis quantization finds the
+    /// least-distortion way to round DCT coefficients to the quantization grid;
+    /// enabling this option lets it also consider how different scan layouts
+    /// interact with that rounding, for marginally better compression.
     ///
     /// Reset to `false` by both
     /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode) and
@@ -415,7 +438,12 @@ impl Compress {
         }
     }
 
-    /// You can only turn it on
+    /// Enable progressive JPEG encoding (recommended)
+    ///
+    /// Progressive JPEGs render blurry-to-sharp
+    /// during download, instead of top-to-bottom like baseline JPEGs. They also
+    /// tend to compress slightly better. Once enabled,
+    /// progressive mode cannot be turned off without creating a new [`Compress`].
     ///
     /// Reset by [`set_fastest_defaults()`](Self::set_fastest_defaults).
     /// Call that method first.
@@ -426,7 +454,12 @@ impl Compress {
         }
     }
 
-    /// One scan for all components looks best. Other options may flash grayscale or green images.
+    /// Set how color channels are grouped into progressive scan passes.
+    /// [`AllComponentsTogether`](ScanMode::AllComponentsTogether) (recommended) encodes all
+    /// channels in each pass, giving the smoothest progressive display.
+    /// [`ScanPerComponent`](ScanMode::ScanPerComponent) separates channels, which can flash
+    /// grayscale or green during loading.
+    /// [`Auto`](ScanMode::Auto) lets MozJPEG decide.
     ///
     /// # Warning: resets other settings
     ///
@@ -500,7 +533,8 @@ impl Compress {
         self.cinfo.raw_data_in = boolean::from(opt);
     }
 
-    /// Set image quality. Values 60-80 are recommended.
+    /// Set image quality on a 1–100 scale. Values 60–80 are recommended.
+    /// Higher values produce larger, higher-fidelity files.
     ///
     /// Quantization table values are not clamped to the 8-bit range, so at low
     /// quality settings (below ~50) some values may exceed 255 and produce
