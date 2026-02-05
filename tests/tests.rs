@@ -1,11 +1,15 @@
+#![allow(deprecated)]
+
 use mozjpeg::*;
 
 pub fn decompress_jpeg(jpeg: &[u8]) -> Vec<Vec<u8>> {
     let decomp = mozjpeg::Decompress::new_mem(jpeg).unwrap();
 
-    let mut bitmaps:Vec<_> = decomp.components().iter().map(|c|{
-        Vec::with_capacity(c.row_stride() * c.col_stride())
-    }).collect();
+    let mut bitmaps: Vec<_> = decomp
+        .components()
+        .iter()
+        .map(|c| Vec::with_capacity(c.row_stride() * c.col_stride()))
+        .collect();
 
     let mut decomp = decomp.raw().unwrap();
     {
@@ -160,29 +164,32 @@ fn encode_jpeg_with_icc_profile((width, height, data): (usize, usize, Vec<[u8; 3
 
 #[test]
 fn force_8bit_false_matches_set_quality() {
-    // set_quality_force_8bit(q, false) must produce identical output to set_quality(q)
+    // set_force_8bit_quantization(false) is the default, so should match set_quality()
     for &quality in &[10.0, 50.0, 85.0, 95.0] {
         let size = 32;
         let pixels = vec![128u8; size * size * 3];
 
-        // Legacy set_quality (hardcodes force_baseline=false)
+        // Default (no force_8bit set)
         let mut comp = Compress::new(ColorSpace::JCS_RGB);
         comp.set_size(size, size);
         comp.set_quality(quality);
         let mut started = comp.start_compress(Vec::new()).unwrap();
         started.write_scanlines(&pixels).unwrap();
-        let jpeg_legacy = started.finish().unwrap();
+        let jpeg_default = started.finish().unwrap();
 
-        // New method with force_8bit=false
+        // Explicitly set force_8bit=false
         let mut comp = Compress::new(ColorSpace::JCS_RGB);
         comp.set_size(size, size);
-        comp.set_quality_force_8bit(quality, false);
+        comp.set_quality(quality);
+        comp.set_force_8bit_quantization(false);
         let mut started = comp.start_compress(Vec::new()).unwrap();
         started.write_scanlines(&pixels).unwrap();
-        let jpeg_new = started.finish().unwrap();
+        let jpeg_explicit = started.finish().unwrap();
 
-        assert_eq!(jpeg_legacy, jpeg_new,
-            "set_quality_force_8bit(q, false) should match set_quality(q) at quality {quality}");
+        assert_eq!(
+            jpeg_default, jpeg_explicit,
+            "explicit force_8bit=false should match default at quality {quality}"
+        );
     }
 }
 
@@ -194,23 +201,28 @@ fn force_8bit_true_clamps_at_low_quality() {
 
     let mut comp = Compress::new(ColorSpace::JCS_RGB);
     comp.set_size(size, size);
-    comp.set_quality_force_8bit(10.0, false);
+    comp.set_quality(10.0);
     let mut started = comp.start_compress(Vec::new()).unwrap();
     started.write_scanlines(&pixels).unwrap();
     let jpeg_unclamped = started.finish().unwrap();
 
     let mut comp = Compress::new(ColorSpace::JCS_RGB);
     comp.set_size(size, size);
-    comp.set_quality_force_8bit(10.0, true);
+    comp.set_quality(10.0);
+    comp.set_force_8bit_quantization(true);
     let mut started = comp.start_compress(Vec::new()).unwrap();
     started.write_scanlines(&pixels).unwrap();
     let jpeg_clamped = started.finish().unwrap();
 
-    assert_ne!(jpeg_unclamped, jpeg_clamped,
-        "force_8bit at quality 10 should produce different output (16-bit vs 8-bit DQT)");
+    assert_ne!(
+        jpeg_unclamped, jpeg_clamped,
+        "force_8bit at quality 10 should produce different output (16-bit vs 8-bit DQT)"
+    );
     // Clamped version is slightly smaller (8-bit DQT markers vs 16-bit)
-    assert!(jpeg_clamped.len() < jpeg_unclamped.len(),
-        "8-bit DQT should be smaller than 16-bit DQT");
+    assert!(
+        jpeg_clamped.len() < jpeg_unclamped.len(),
+        "8-bit DQT should be smaller than 16-bit DQT"
+    );
 }
 
 #[test]
@@ -221,24 +233,31 @@ fn force_8bit_no_effect_at_high_quality() {
 
     let mut comp = Compress::new(ColorSpace::JCS_RGB);
     comp.set_size(size, size);
-    comp.set_quality_force_8bit(85.0, false);
+    comp.set_quality(85.0);
     let mut started = comp.start_compress(Vec::new()).unwrap();
     started.write_scanlines(&pixels).unwrap();
     let jpeg_unclamped = started.finish().unwrap();
 
     let mut comp = Compress::new(ColorSpace::JCS_RGB);
     comp.set_size(size, size);
-    comp.set_quality_force_8bit(85.0, true);
+    comp.set_quality(85.0);
+    comp.set_force_8bit_quantization(true);
     let mut started = comp.start_compress(Vec::new()).unwrap();
     started.write_scanlines(&pixels).unwrap();
     let jpeg_clamped = started.finish().unwrap();
 
-    assert_eq!(jpeg_unclamped, jpeg_clamped,
-        "force_8bit should have no effect at quality 85 (all values already <= 255)");
+    assert_eq!(
+        jpeg_unclamped, jpeg_clamped,
+        "force_8bit should have no effect at quality 85 (all values already <= 255)"
+    );
 }
 
 fn decode_jpeg(buffer: &[u8]) -> (usize, usize, Vec<[u8; 3]>) {
-    let mut decoder = match mozjpeg::Decompress::new_mem(buffer).unwrap().image().unwrap() {
+    let mut decoder = match mozjpeg::Decompress::new_mem(buffer)
+        .unwrap()
+        .image()
+        .unwrap()
+    {
         mozjpeg::decompress::Format::RGB(d) => d,
         _ => unimplemented!(),
     };
@@ -260,7 +279,11 @@ fn smoothing_factor_preserved() {
     let mut data = Vec::with_capacity(size * size * 3);
     for y in 0..size {
         for x in 0..size {
-            let v = if ((x / 2) + (y / 2)) % 2 == 0 { 80u8 } else { 176u8 };
+            let v = if ((x / 2) + (y / 2)) % 2 == 0 {
+                80u8
+            } else {
+                176u8
+            };
             data.push(v);
             data.push(v);
             data.push(v);
@@ -304,11 +327,17 @@ fn smoothing_factor_preserved() {
     };
 
     // Smoothing should reduce file size for high-frequency content
-    assert!(size_smooth_after < size_no_smooth,
-        "smoothing should reduce size: {} < {}", size_smooth_after, size_no_smooth);
+    assert!(
+        size_smooth_after < size_no_smooth,
+        "smoothing should reduce size: {} < {}",
+        size_smooth_after,
+        size_no_smooth
+    );
 
     // Both orderings should produce the same result (this was the bug)
-    assert_eq!(size_smooth_before, size_smooth_after,
+    assert_eq!(
+        size_smooth_before, size_smooth_after,
         "smoothing_factor should work regardless of call order: {} != {}",
-        size_smooth_before, size_smooth_after);
+        size_smooth_before, size_smooth_after
+    );
 }

@@ -1,7 +1,6 @@
 use mozjpeg::*;
-use std::sync::LazyLock;
 
-static RGB: LazyLock<Vec<[u8; 3]>> = LazyLock::new(|| {
+fn get_rgb_reference() -> Vec<[u8; 3]> {
     let d = Decompress::with_markers(ALL_MARKERS)
         .from_path("tests/test.jpg")
         .unwrap();
@@ -18,10 +17,11 @@ static RGB: LazyLock<Vec<[u8; 3]>> = LazyLock::new(|| {
     assert_eq!(ColorSpace::JCS_RGB, image.color_space());
 
     image.read_scanlines::<[u8; 3]>().unwrap()
-});
+}
 
 #[test]
 fn decode_test_rgba() {
+    let rgb = get_rgb_reference();
     let d = Decompress::with_markers(ALL_MARKERS)
         .from_path("tests/test.jpg")
         .unwrap();
@@ -38,11 +38,12 @@ fn decode_test_rgba() {
     assert_eq!(ColorSpace::JCS_EXT_RGBA, image.color_space());
 
     let rgba = image.read_scanlines::<[u8; 4]>().unwrap();
-    assert!(rgba.iter().map(|px| &px[..3]).eq(RGB.iter()));
+    assert!(rgba.iter().map(|px| &px[..3]).eq(rgb.iter()));
 }
 
 #[test]
 fn decode_test_argb() {
+    let rgb = get_rgb_reference();
     let d = Decompress::with_markers(ALL_MARKERS)
         .from_path("tests/test.jpg")
         .unwrap();
@@ -59,11 +60,12 @@ fn decode_test_argb() {
     assert_eq!(ColorSpace::JCS_EXT_ARGB, image.color_space());
 
     let rgba = image.read_scanlines::<[u8; 4]>().unwrap();
-    assert!(rgba.iter().map(|px| &px[1..]).eq(RGB.iter()));
+    assert!(rgba.iter().map(|px| &px[1..]).eq(rgb.iter()));
 }
 
 #[test]
 fn decode_test_rgb_flat() {
+    let rgb = get_rgb_reference();
     let d = Decompress::with_markers(ALL_MARKERS)
         .from_path("tests/test.jpg")
         .unwrap();
@@ -84,11 +86,12 @@ fn decode_test_rgb_flat() {
 
     assert_eq!(buf.len(), buf_size);
 
-    assert!(buf.chunks_exact(3).eq(RGB.iter()));
+    assert!(buf.chunks_exact(3).eq(rgb.iter()));
 }
 
 #[test]
 fn decode_test_rgba_flat() {
+    let rgb = get_rgb_reference();
     for space in [ColorSpace::JCS_EXT_RGBA, ColorSpace::JCS_EXT_RGBX] {
         let d = Decompress::with_markers(ALL_MARKERS)
             .from_path("tests/test.jpg")
@@ -107,18 +110,15 @@ fn decode_test_rgba_flat() {
 
         let buf_size = image.min_flat_buffer_size();
         let buf = image.read_scanlines::<u8>().unwrap();
+
         assert_eq!(buf.len(), buf_size);
 
-        assert!(buf.chunks_exact(4).map(|px| &px[..3]).eq(RGB.iter()));
+        assert!(buf.chunks_exact(4).map(|px| &px[..3]).eq(rgb.iter()));
     }
 }
 
 #[test]
 fn decode_failure_test() {
-    assert!(std::panic::catch_unwind(|| {
-        Decompress::with_markers(ALL_MARKERS)
-            .from_path("tests/test.rs")
-            .unwrap();
-    })
-    .is_err());
+    assert!(Decompress::new_mem(&[]).is_err());
+    assert!(Decompress::new_mem(&[0xFF, 0xD8, 0, 1, 2, 3]).is_err());
 }

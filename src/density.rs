@@ -1,4 +1,4 @@
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PixelDensityUnit {
     /// No units
     PixelAspectRatio = 0,
@@ -8,6 +8,7 @@ pub enum PixelDensityUnit {
     Centimeters = 2,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct PixelDensity {
     pub unit: PixelDensityUnit,
     pub x: u16,

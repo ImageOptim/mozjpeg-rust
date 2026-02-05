@@ -1,4 +1,3 @@
-use crate::{colorspace::ColorSpace, PixelDensity};
 use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
 use crate::component::CompInfoExt;
@@ -16,6 +15,7 @@ use crate::ffi::J_INT_PARAM;
 use crate::marker::Marker;
 use crate::qtable::QTable;
 use crate::writedst::DestinationMgr;
+use crate::{colorspace::ColorSpace, PixelDensity};
 use arrayvec::ArrayVec;
 use std::cmp::min;
 use std::io;
@@ -31,9 +31,91 @@ pub const MAX_MCU_HEIGHT: usize = 16;
 /// Codec doesn't allow more channels than this
 pub const MAX_COMPONENTS: usize = 4;
 
+/// Pending configuration that will be applied at `start_compress()` time.
+///
+/// Settings are collected here so they can be applied in the correct order,
+/// making the order of setter calls irrelevant to the user.
+///
+/// # Application Order
+///
+/// Settings are applied in this order at `start_compress()`:
+/// 1. Image dimensions (width, height)
+/// 2. Output colorspace (if changed)
+/// 3. Int params (`scan_mode`, `fastest_defaults`)
+/// 4. Call `jpeg_set_defaults()` to set up internal state
+/// 5. All other settings (quality, smoothing, progressive, etc.)
+/// 6. User callbacks for raw cinfo access (applied last)
+///
+/// This ensures settings aren't accidentally reset by `jpeg_set_defaults()`.
+#[derive(Clone, Default, PartialEq)]
+pub(crate) struct PendingConfig {
+    // === Image basics - applied FIRST ===
+    pub(crate) width: Option<u32>,
+    pub(crate) height: Option<u32>,
+    pub(crate) output_colorspace: Option<ColorSpace>,
+
+    // === Settings that control jpeg_set_defaults() behavior ===
+    pub(crate) scan_mode: Option<ScanMode>,
+    pub(crate) fastest_defaults: bool,
+
+    // === All other settings - applied AFTER jpeg_set_defaults() ===
+    pub(crate) quality: Option<i32>,
+    pub(crate) luma_qtable: Option<QTable>,
+    pub(crate) chroma_qtable: Option<QTable>,
+    /// When true, quantization table values are clamped to 1-255 (8-bit DQT).
+    /// When false (default), values can go up to 32767 (16-bit DQT).
+    pub(crate) force_8bit_quantization: bool,
+    pub(crate) smoothing_factor: Option<u8>,
+    pub(crate) pixel_density: Option<PixelDensity>,
+    pub(crate) optimize_coding: Option<bool>,
+    pub(crate) optimize_scans: Option<bool>,
+    pub(crate) use_scans_in_trellis: Option<bool>,
+    pub(crate) progressive_mode: bool,
+    pub(crate) raw_data_in: Option<bool>,
+    pub(crate) subsampling: Option<Vec<(i32, i32)>>,
+}
+
 /// Create a new JPEG file from pixels
 ///
 /// Wrapper for `jpeg_compress_struct`
+///
+/// # Configuration Order Independence
+///
+/// As of version 0.11.0, settings can be applied in any order. They are
+/// collected and applied at [`start_compress()`](Self::start_compress) time
+/// in the correct order.
+///
+/// ```
+/// use mozjpeg::{Compress, ColorSpace, ScanMode};
+///
+/// let mut comp = Compress::new(ColorSpace::JCS_RGB);
+/// comp.set_size(64, 64);
+///
+/// // These can be called in any order - same result either way
+/// comp.set_smoothing_factor(50);
+/// comp.set_scan_optimization_mode(ScanMode::Auto);
+/// comp.set_quality(85.0);
+/// ```
+///
+/// # Raw Access
+///
+/// For advanced use cases requiring direct `cinfo` access, use
+/// [`mutate_cinfo_last()`](Self::mutate_cinfo_last) which runs a callback
+/// after all configuration is applied:
+///
+/// ```
+/// use mozjpeg::{Compress, ColorSpace};
+///
+/// let mut comp = Compress::new(ColorSpace::JCS_RGB);
+/// comp.set_size(64, 64);
+/// comp.set_quality(85.0);
+///
+/// // This callback runs at start_compress() time, after all config is applied
+/// comp.mutate_cinfo_last(|cinfo| {
+///     // Direct cinfo access here
+///     // e.g., cinfo.smoothing_factor = 50;
+/// });
+/// ```
 pub struct Compress {
     cinfo: jpeg_compress_struct,
 
@@ -41,18 +123,25 @@ pub struct Compress {
     /// so I need talismans to ward off nasal demons haunting self-referential structs
     own_err: *mut ErrorMgr,
     _it_is_self_referential: PhantomPinned,
+
+    /// Pending configuration to be applied at start_compress() time.
+    pending: PendingConfig,
+
+    /// Snapshot of configuration that was already applied.
+    /// Used for incremental application when deprecated methods trigger early apply.
+    applied_snapshot: Option<PendingConfig>,
+
+    /// Callbacks for raw cinfo access, run LAST after all other config.
+    /// Stored separately from PendingConfig because closures can't be Clone/PartialEq.
+    #[allow(clippy::type_complexity)]
+    raw_callbacks: Vec<Box<dyn FnOnce(&mut jpeg_compress_struct)>>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ScanMode {
-    /// Encode all color channels in each scan pass. Produces the best visual
-    /// experience during progressive loading — the image sharpens uniformly.
     AllComponentsTogether = 0,
-    /// Encode each color channel in a separate scan pass. During progressive
-    /// loading, this can cause the image to flash grayscale or appear
-    /// green-tinted before all channels arrive.
+    /// Can flash grayscale or green-tinted images
     ScanPerComponent = 1,
-    /// Let MozJPEG decide the scan layout automatically.
     Auto = 2,
 }
 
@@ -63,10 +152,7 @@ pub struct CompressStarted<W> {
 }
 
 impl Compress {
-    /// Compress image using the given *input* color space.
-    /// The output JPEG color space defaults to a sensible match
-    /// (e.g., RGB→YCbCr, Grayscale→Grayscale), but can be overridden with
-    /// [`set_color_space()`](Self::set_color_space).
+    /// Compress image using input in this colorspace.
     ///
     /// ## Panics
     ///
@@ -92,6 +178,9 @@ impl Compress {
                 cinfo: mem::zeroed(),
                 own_err: Box::into_raw(err),
                 _it_is_self_referential: PhantomPinned,
+                pending: PendingConfig::default(),
+                applied_snapshot: None,
+                raw_callbacks: Vec::new(),
             };
             newself.cinfo.common.err = addr_of_mut!(*newself.own_err);
 
@@ -108,20 +197,294 @@ impl Compress {
 
     #[doc(hidden)]
     #[deprecated(note = "Give a Vec to start_compress instead")]
-    pub fn set_mem_dest(&self) {
+    pub fn set_mem_dest(&self) {}
+
+    /// Apply all pending configuration incrementally.
+    ///
+    /// Called automatically by `start_compress()` and by deprecated methods like
+    /// `components_mut()`. Uses a snapshot to track what was previously applied,
+    /// so only new/changed settings are applied on subsequent calls.
+    ///
+    /// Settings are applied in the correct order to ensure `jpeg_set_defaults()`
+    /// doesn't reset user settings.
+    fn apply_pending_config(&mut self) {
+        let default_snap = PendingConfig::default();
+        let snap = self.applied_snapshot.as_ref().unwrap_or(&default_snap);
+
+        // === Phase 1: Image dimensions (only if changed) ===
+        if self.pending.width != snap.width {
+            if let Some(width) = self.pending.width {
+                self.cinfo.image_width = width as JDIMENSION;
+            }
+        }
+        if self.pending.height != snap.height {
+            if let Some(height) = self.pending.height {
+                self.cinfo.image_height = height as JDIMENSION;
+            }
+        }
+
+        // === Phase 2: Output colorspace (only if changed) ===
+        if self.pending.output_colorspace != snap.output_colorspace {
+            if let Some(colorspace) = self.pending.output_colorspace {
+                unsafe {
+                    ffi::jpeg_set_colorspace(&mut self.cinfo, colorspace);
+                }
+            }
+        }
+
+        // === Phase 3: Set int params BEFORE jpeg_set_defaults() ===
+        let scan_mode_changed = self.pending.scan_mode != snap.scan_mode;
+        let fastest_changed = self.pending.fastest_defaults != snap.fastest_defaults;
+
+        if scan_mode_changed {
+            if let Some(mode) = self.pending.scan_mode {
+                unsafe {
+                    ffi::jpeg_c_set_int_param(
+                        &mut self.cinfo,
+                        J_INT_PARAM::JINT_DC_SCAN_OPT_MODE,
+                        mode as c_int,
+                    );
+                }
+            }
+        }
+
+        if fastest_changed && self.pending.fastest_defaults {
+            unsafe {
+                ffi::jpeg_c_set_int_param(
+                    &mut self.cinfo,
+                    J_INT_PARAM::JINT_COMPRESS_PROFILE,
+                    ffi::JINT_COMPRESS_PROFILE_VALUE::JCP_FASTEST as c_int,
+                );
+            }
+        }
+
+        // === Phase 4: Call jpeg_set_defaults() if int params changed ===
+        // jpeg_set_defaults() resets many settings, so we track if it was called
+        // to force reapplication of affected settings
+        let defaults_called = (scan_mode_changed || fastest_changed)
+            && (self.pending.scan_mode.is_some() || self.pending.fastest_defaults);
+        if defaults_called {
+            unsafe {
+                ffi::jpeg_set_defaults(&mut self.cinfo);
+            }
+        }
+
+        // === Phase 5: Apply all other settings ===
+        // If jpeg_set_defaults() was called, reapply ALL settings regardless of snapshot
+        // because it resets quality, smoothing, progressive mode, etc.
+
+        // Quality / quantization tables
+        let force_8bit = self.pending.force_8bit_quantization;
+        if defaults_called || self.pending.quality != snap.quality
+            || self.pending.force_8bit_quantization != snap.force_8bit_quantization
+        {
+            if let Some(quality) = self.pending.quality {
+                unsafe {
+                    ffi::jpeg_set_quality(
+                        &mut self.cinfo,
+                        quality as c_int,
+                        boolean::from(force_8bit),
+                    );
+                }
+            }
+        }
+
+        if defaults_called || self.pending.luma_qtable != snap.luma_qtable
+            || self.pending.force_8bit_quantization != snap.force_8bit_quantization
+        {
+            if let Some(ref qtable) = self.pending.luma_qtable {
+                unsafe {
+                    ffi::jpeg_add_quant_table(
+                        &mut self.cinfo,
+                        0,
+                        qtable.as_ptr().cast(),
+                        100,
+                        boolean::from(force_8bit) as c_int,
+                    );
+                }
+            }
+        }
+
+        if defaults_called || self.pending.chroma_qtable != snap.chroma_qtable
+            || self.pending.force_8bit_quantization != snap.force_8bit_quantization
+        {
+            if let Some(ref qtable) = self.pending.chroma_qtable {
+                unsafe {
+                    ffi::jpeg_add_quant_table(
+                        &mut self.cinfo,
+                        1,
+                        qtable.as_ptr().cast(),
+                        100,
+                        boolean::from(force_8bit) as c_int,
+                    );
+                }
+            }
+        }
+
+        // Smoothing (reset to 0 by jpeg_set_defaults)
+        if defaults_called || self.pending.smoothing_factor != snap.smoothing_factor {
+            if let Some(factor) = self.pending.smoothing_factor {
+                self.cinfo.smoothing_factor = factor as c_int;
+            }
+        }
+
+        // Pixel density
+        if defaults_called || self.pending.pixel_density != snap.pixel_density {
+            if let Some(density) = self.pending.pixel_density {
+                self.cinfo.density_unit = density.unit as u8;
+                self.cinfo.X_density = density.x;
+                self.cinfo.Y_density = density.y;
+            }
+        }
+
+        // Coding optimization
+        if defaults_called || self.pending.optimize_coding != snap.optimize_coding {
+            if let Some(opt) = self.pending.optimize_coding {
+                self.cinfo.optimize_coding = boolean::from(opt);
+            }
+        }
+
+        // Scan optimization (mozjpeg extension)
+        if defaults_called || self.pending.optimize_scans != snap.optimize_scans {
+            if let Some(opt) = self.pending.optimize_scans {
+                unsafe {
+                    ffi::jpeg_c_set_bool_param(
+                        &mut self.cinfo,
+                        J_BOOLEAN_PARAM::JBOOLEAN_OPTIMIZE_SCANS,
+                        boolean::from(opt),
+                    );
+                }
+                if !opt {
+                    self.cinfo.scan_info = ptr::null();
+                }
+            }
+        }
+
+        // Trellis scans (mozjpeg extension)
+        if defaults_called || self.pending.use_scans_in_trellis != snap.use_scans_in_trellis {
+            if let Some(opt) = self.pending.use_scans_in_trellis {
+                unsafe {
+                    ffi::jpeg_c_set_bool_param(
+                        &mut self.cinfo,
+                        J_BOOLEAN_PARAM::JBOOLEAN_USE_SCANS_IN_TRELLIS,
+                        boolean::from(opt),
+                    );
+                }
+            }
+        }
+
+        // Progressive mode (reset by jpeg_set_defaults, can only be turned on)
+        if self.pending.progressive_mode && (defaults_called || !snap.progressive_mode) {
+            unsafe {
+                ffi::jpeg_simple_progression(&mut self.cinfo);
+            }
+        }
+
+        // Raw data input
+        if defaults_called || self.pending.raw_data_in != snap.raw_data_in {
+            if let Some(opt) = self.pending.raw_data_in {
+                self.cinfo.raw_data_in = boolean::from(opt);
+            }
+        }
+
+        // Subsampling factors (reset by jpeg_set_defaults)
+        if defaults_called || self.pending.subsampling != snap.subsampling {
+            if let Some(ref factors) = self.pending.subsampling {
+                let num_components = self.cinfo.num_components as usize;
+                for (i, &(h, v)) in factors.iter().enumerate() {
+                    if i < num_components {
+                        unsafe {
+                            (*self.cinfo.comp_info.add(i)).h_samp_factor = h;
+                            (*self.cinfo.comp_info.add(i)).v_samp_factor = v;
+                        }
+                    }
+                }
+            }
+        }
+
+        // === Phase 6: Run user callbacks LAST ===
+        for callback in std::mem::take(&mut self.raw_callbacks) {
+            callback(&mut self.cinfo);
+        }
+
+        // === Update snapshot to reflect what we just applied ===
+        self.applied_snapshot = Some(self.pending.clone());
     }
 
     /// Settings can't be changed after this call. Returns a `CompressStarted` struct that will handle the rest of the writing.
     ///
+    /// All pending configuration is applied in the correct order before compression starts.
+    ///
     /// ## Panics
     ///
     /// It may panic, like all functions of this library.
-    pub fn start_compress<W: io::Write>(self, writer: W) -> io::Result<CompressStarted<W>> {
-        if !self.components().iter().any(|c| c.h_samp_factor == 1) { return Err(io::Error::new(io::ErrorKind::InvalidInput, "at least one h_samp_factor must be 1")); }
-        if !self.components().iter().any(|c| c.v_samp_factor == 1) { return Err(io::Error::new(io::ErrorKind::InvalidInput, "at least one v_samp_factor must be 1")); }
+    pub fn start_compress<W: io::Write>(mut self, writer: W) -> io::Result<CompressStarted<W>> {
+        // Apply all pending configuration in the correct order
+        self.apply_pending_config();
+
+        // Validate dimensions
+        let width = self.cinfo.image_width;
+        let height = self.cinfo.image_height;
+        if width == 0 || height == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "invalid dimensions: {}x{} (both must be > 0)",
+                    width, height
+                ),
+            ));
+        }
+        // JPEG standard max is 65535, but libjpeg may have lower limits
+        const JPEG_MAX_DIMENSION: u32 = 65535;
+        if width > JPEG_MAX_DIMENSION || height > JPEG_MAX_DIMENSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "dimensions {}x{} exceed JPEG maximum of {}",
+                    width, height, JPEG_MAX_DIMENSION
+                ),
+            ));
+        }
+
+        // Validate sampling factors
+        for (i, comp) in self.components().iter().enumerate() {
+            if comp.h_samp_factor <= 0 || comp.v_samp_factor <= 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "component {} has invalid sampling factors: h={}, v={} (must be > 0)",
+                        i, comp.h_samp_factor, comp.v_samp_factor
+                    ),
+                ));
+            }
+            // libjpeg supports max sampling factor of 4
+            if comp.h_samp_factor > 4 || comp.v_samp_factor > 4 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "component {} has sampling factors h={}, v={} (max is 4)",
+                        i, comp.h_samp_factor, comp.v_samp_factor
+                    ),
+                ));
+            }
+        }
+
+        if !self.components().iter().any(|c| c.h_samp_factor == 1) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "at least one h_samp_factor must be 1",
+            ));
+        }
+        if !self.components().iter().any(|c| c.v_samp_factor == 1) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "at least one v_samp_factor must be 1",
+            ));
+        }
 
         // 1bpp, rounded to 4K page
-        let expected_file_size = (self.cinfo.image_width as usize * self.cinfo.image_height as usize / 8 + 4095) & !4095;
+        let expected_file_size =
+            (self.cinfo.image_width as usize * self.cinfo.image_height as usize / 8 + 4095) & !4095;
         let write_buffer_capacity = expected_file_size.clamp(1 << 12, 1 << 16);
 
         let mut started = CompressStarted {
@@ -184,10 +547,15 @@ impl<W> CompressStarted<W> {
         });
     }
 
-    /// Read-only view of component information
+    /// Read-only view of component information.
+    ///
+    /// All configuration has already been applied by `start_compress()`.
     #[must_use]
     pub fn components(&self) -> &[CompInfo] {
-        self.compress.components()
+        if self.compress.cinfo.comp_info.is_null() {
+            return &[];
+        }
+        unsafe { slice::from_raw_parts(self.compress.cinfo.comp_info, self.compress.cinfo.num_components as usize) }
     }
 
     fn can_write_more_lines(&self) -> bool {
@@ -196,17 +564,92 @@ impl<W> CompressStarted<W> {
 }
 
 impl Compress {
-    /// Expose components for modification, e.g. to set chroma subsampling
+    /// Modify components via a callback that runs LAST, after all other configuration.
     ///
-    /// All per-component fields (sampling factors, quantization table
-    /// assignments, Huffman table assignments) are reset to colorspace defaults by
-    /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode),
-    /// [`set_fastest_defaults()`](Self::set_fastest_defaults), and
-    /// [`set_color_space()`](Self::set_color_space).
-    /// For example, 4:2:2 subsampling will silently revert to 4:2:0.
-    /// Call those methods *before* modifying components.
-    /// The same applies to [`set_chroma_sampling_pixel_sizes()`](Self::set_chroma_sampling_pixel_sizes).
+    /// The callback is executed at [`start_compress()`](Self::start_compress) time,
+    /// after `jpeg_set_defaults()` has been called and all pending settings applied.
+    /// This ensures your modifications won't be reset.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mozjpeg::{Compress, ColorSpace};
+    ///
+    /// let mut comp = Compress::new(ColorSpace::JCS_YCbCr);
+    /// comp.set_size(64, 64);
+    ///
+    /// comp.mutate_components_last(|components| {
+    ///     // Set 4:2:0 subsampling
+    ///     if components.len() >= 3 {
+    ///         components[0].h_samp_factor = 2;
+    ///         components[0].v_samp_factor = 2;
+    ///         components[1].h_samp_factor = 1;
+    ///         components[1].v_samp_factor = 1;
+    ///         components[2].h_samp_factor = 1;
+    ///         components[2].v_samp_factor = 1;
+    ///     }
+    /// });
+    /// ```
+    pub fn mutate_components_last<F>(&mut self, f: F)
+    where
+        F: FnOnce(&mut [CompInfo]) + 'static,
+    {
+        self.raw_callbacks.push(Box::new(move |cinfo| {
+            if !cinfo.comp_info.is_null() && cinfo.num_components > 0 {
+                let components = unsafe {
+                    slice::from_raw_parts_mut(cinfo.comp_info, cinfo.num_components as usize)
+                };
+                f(components);
+            }
+        }));
+    }
+
+    /// Access raw `jpeg_compress_struct` via a callback that runs LAST, after all other configuration.
+    ///
+    /// The callback is executed at [`start_compress()`](Self::start_compress) time,
+    /// after `jpeg_set_defaults()` has been called and all pending settings applied.
+    /// This ensures your modifications won't be reset.
+    ///
+    /// # Safety
+    ///
+    /// While this method is safe to call, the callback receives raw access to libjpeg's
+    /// internal state. Invalid modifications may cause undefined behavior during compression.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mozjpeg::{Compress, ColorSpace};
+    ///
+    /// let mut comp = Compress::new(ColorSpace::JCS_RGB);
+    /// comp.set_size(64, 64);
+    ///
+    /// comp.mutate_cinfo_last(|cinfo| {
+    ///     // Direct cinfo access for advanced use cases
+    ///     cinfo.smoothing_factor = 50;
+    /// });
+    /// ```
+    pub fn mutate_cinfo_last<F>(&mut self, f: F)
+    where
+        F: FnOnce(&mut jpeg_compress_struct) + 'static,
+    {
+        self.raw_callbacks.push(Box::new(f));
+    }
+
+    /// Expose components for modification, e.g. to set chroma subsampling.
+    ///
+    /// # Deprecated
+    ///
+    /// Use [`mutate_components_last()`](Self::mutate_components_last) instead for order-independent configuration.
+    ///
+    /// This method applies all pending configuration before returning the reference.
+    /// Any setter calls made AFTER calling this method will have no effect.
+    #[deprecated(
+        since = "0.11.0",
+        note = "Use mutate_components_last() for order-independent configuration"
+    )]
     pub fn components_mut(&mut self) -> &mut [CompInfo] {
+        // Apply pending config so the caller sees the computed state
+        self.apply_pending_config();
         if self.cinfo.comp_info.is_null() {
             return &mut [];
         }
@@ -215,15 +658,45 @@ impl Compress {
         }
     }
 
-    /// Read-only view of component information
+    /// Read-only view of component information.
+    ///
+    /// Applies pending configuration first so the returned values reflect
+    /// all setter calls made so far.
     #[must_use]
-    pub fn components(&self) -> &[CompInfo] {
+    pub fn components(&mut self) -> &[CompInfo] {
+        self.apply_pending_config();
         if self.cinfo.comp_info.is_null() {
             return &[];
         }
-        unsafe {
-            slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize)
-        }
+        unsafe { slice::from_raw_parts(self.cinfo.comp_info, self.cinfo.num_components as usize) }
+    }
+
+    /// Access to cinfo for inspecting configuration state.
+    ///
+    /// Applies pending configuration first so the returned values reflect
+    /// all setter calls made so far.
+    #[doc(hidden)]
+    pub fn cinfo(&mut self) -> &ffi::jpeg_compress_struct {
+        self.apply_pending_config();
+        &self.cinfo
+    }
+
+    /// Internal mutable access to cinfo.
+    ///
+    /// # Deprecated
+    ///
+    /// Use [`mutate_cinfo_last()`](Self::mutate_cinfo_last) instead for order-independent configuration.
+    ///
+    /// This method applies all pending configuration before returning the reference.
+    /// Any setter calls made AFTER calling this method will have no effect.
+    #[doc(hidden)]
+    #[deprecated(
+        since = "0.11.0",
+        note = "Use mutate_cinfo_last() for order-independent configuration"
+    )]
+    pub fn cinfo_mut(&mut self) -> &mut ffi::jpeg_compress_struct {
+        self.apply_pending_config();
+        &mut self.cinfo
     }
 }
 
@@ -234,19 +707,64 @@ impl<W> CompressStarted<W> {
     ///
     /// It may panic, like all functions of this library.
     pub fn write_scanlines(&mut self, image_src: &[u8]) -> io::Result<()> {
-        if self.compress.cinfo.raw_data_in != 0 ||
-            self.compress.cinfo.input_components <= 0 ||
-            self.compress.cinfo.image_width == 0 {
+        if self.compress.cinfo.raw_data_in != 0
+            || self.compress.cinfo.input_components <= 0
+            || self.compress.cinfo.image_width == 0
+        {
             return Err(io::ErrorKind::InvalidInput.into());
         }
 
-        let byte_width = self.compress.cinfo.image_width as usize * self.compress.cinfo.input_components as usize;
-        for rows in image_src.chunks(MAX_MCU_HEIGHT * byte_width) {
+        let byte_width = self.compress.cinfo.image_width as usize
+            * self.compress.cinfo.input_components as usize;
+        self.write_scanlines_strided(image_src, byte_width)
+    }
+
+    /// Write scanlines with custom stride (bytes per row)
+    ///
+    /// Use this when your pixel data has padding/alignment between rows.
+    /// `stride` is the number of bytes from the start of one row to the start of the next.
+    ///
+    /// ## Panics
+    ///
+    /// It may panic, like all functions of this library.
+    pub fn write_scanlines_strided(&mut self, image_src: &[u8], stride: usize) -> io::Result<()> {
+        if self.compress.cinfo.raw_data_in != 0
+            || self.compress.cinfo.input_components <= 0
+            || self.compress.cinfo.image_width == 0
+        {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+
+        let byte_width = self.compress.cinfo.image_width as usize
+            * self.compress.cinfo.input_components as usize;
+
+        // Validate stride
+        if stride < byte_width {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("stride ({stride}) must be >= byte_width ({byte_width})"),
+            ));
+        }
+
+        // Process rows in chunks of MAX_MCU_HEIGHT
+        let mut offset = 0;
+        while offset < image_src.len() {
             let mut row_pointers = ArrayVec::<_, MAX_MCU_HEIGHT>::new();
-            for row in rows.chunks_exact(byte_width) {
-                row_pointers.push(row.as_ptr());
+
+            // Collect up to MAX_MCU_HEIGHT row pointers
+            for _ in 0..MAX_MCU_HEIGHT {
+                if offset + byte_width > image_src.len() {
+                    break;
+                }
+                row_pointers.push(image_src[offset..].as_ptr());
+                offset += stride;
             }
 
+            if row_pointers.is_empty() {
+                break;
+            }
+
+            // Write the rows
             let mut rows_left = row_pointers.len() as u32;
             let mut row_pointers = row_pointers.as_ptr();
             while rows_left > 0 {
@@ -269,8 +787,7 @@ impl<W> CompressStarted<W> {
     }
 
     /// Advanced. Only possible after `set_raw_data_in()`.
-    /// Write pre-downsampled component planes (typically YCbCr) directly,
-    /// bypassing the encoder's color conversion and downsampling.
+    /// Write YCbCr blocks pixels instead of usual color space
     ///
     /// See `raw_data_in` in libjpeg docs
     ///
@@ -291,12 +808,21 @@ impl<W> CompressStarted<W> {
 
         let num_components = self.components().len();
         if num_components > MAX_COMPONENTS || num_components > image_src.len() {
-            panic!("Too many components: declared {}, got {}", num_components, image_src.len());
+            panic!(
+                "Too many components: declared {}, got {}",
+                num_components,
+                image_src.len()
+            );
         }
 
         for (ci, comp_info) in self.components().iter().enumerate() {
             if comp_info.row_stride() * comp_info.col_stride() > image_src[ci].len() {
-                panic!("Bitmap too small. Expected {}x{}, got {}", comp_info.row_stride(), comp_info.col_stride(), image_src[ci].len());
+                panic!(
+                    "Bitmap too small. Expected {}x{}, got {}",
+                    comp_info.row_stride(),
+                    comp_info.col_stride(),
+                    image_src[ci].len()
+                );
             }
         }
 
@@ -305,7 +831,12 @@ impl<W> CompressStarted<W> {
             unsafe {
                 let mut row_ptrs = [[ptr::null::<u8>(); MAX_MCU_HEIGHT]; MAX_COMPONENTS];
 
-                for ((comp_info, &image_src), comp_row_ptrs) in self.components().iter().zip(image_src).zip(row_ptrs.iter_mut()) {
+                for ((comp_info, &image_src), comp_row_ptrs) in self
+                    .components()
+                    .iter()
+                    .zip(image_src)
+                    .zip(row_ptrs.iter_mut())
+                {
                     let row_stride = comp_info.row_stride();
 
                     let input_height = image_src.len() / row_stride;
@@ -319,13 +850,23 @@ impl<W> CompressStarted<W> {
                     assert!(comp_height >= 8);
 
                     // row_ptrs were initialized to null
-                    for (src_row, row_ptr) in image_src.chunks_exact(row_stride).skip(comp_start_row).take(comp_height).zip(comp_row_ptrs.iter_mut()) {
+                    for (src_row, row_ptr) in image_src
+                        .chunks_exact(row_stride)
+                        .skip(comp_start_row)
+                        .take(comp_height)
+                        .zip(comp_row_ptrs.iter_mut())
+                    {
                         *row_ptr = src_row.as_ptr();
                     }
                 }
 
-                let comp_ptrs: [*const *const u8; MAX_COMPONENTS] = std::array::from_fn(|ci| row_ptrs[ci].as_ptr());
-                let rows_written = ffi::jpeg_write_raw_data(&mut self.compress.cinfo, comp_ptrs.as_ptr(), mcu_height as u32) as usize;
+                let comp_ptrs: [*const *const u8; MAX_COMPONENTS] =
+                    std::array::from_fn(|ci| row_ptrs[ci].as_ptr());
+                let rows_written = ffi::jpeg_write_raw_data(
+                    &mut self.compress.cinfo,
+                    comp_ptrs.as_ptr(),
+                    mcu_height as u32,
+                ) as usize;
                 if 0 == rows_written {
                     return false;
                 }
@@ -337,24 +878,23 @@ impl<W> CompressStarted<W> {
 }
 
 impl Compress {
-    /// Set the *output* color space of the JPEG being written. This can differ
-    /// from the input color space set in [`new()`](Self::new) — libjpeg handles
-    /// the conversion automatically (e.g., RGB input → YCbCr output).
+    /// Set color space of JPEG being written, different from input color space
     ///
-    /// This resets all per-component settings to colorspace defaults:
-    /// sampling factors, quantization table assignments, and Huffman table assignments.
-    /// Set chroma subsampling via [`components_mut()`](Self::components_mut) or
-    /// [`set_chroma_sampling_pixel_sizes()`](Self::set_chroma_sampling_pixel_sizes) *after* this call.
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
+    ///
+    /// See `jpeg_set_colorspace` in libjpeg docs.
     pub fn set_color_space(&mut self, color_space: ColorSpace) {
-        unsafe {
-            ffi::jpeg_set_colorspace(&mut self.cinfo, color_space);
-        }
+        self.pending.output_colorspace = Some(color_space);
     }
 
-    /// Image size of the input
+    /// Image size of the input.
+    ///
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
     pub fn set_size(&mut self, width: usize, height: usize) {
-        self.cinfo.image_width = width as JDIMENSION;
-        self.cinfo.image_height = height as JDIMENSION;
+        self.pending.width = Some(width as u32);
+        self.pending.height = Some(height as u32);
     }
 
     /// libjpeg's `input_gamma` = image gamma of input image
@@ -370,261 +910,115 @@ impl Compress {
     /// [^note]: This method is not related to EXIF-based intrinsic image sizing,
     /// and does not affect rendering in browsers.
     ///
-    /// Reset to defaults by
-    /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode) and
-    /// [`set_fastest_defaults()`](Self::set_fastest_defaults). Call those methods first.
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
     pub fn set_pixel_density(&mut self, density: PixelDensity) {
-        self.cinfo.density_unit = density.unit as u8;
-        self.cinfo.X_density = density.x;
-        self.cinfo.Y_density = density.y;
+        self.pending.pixel_density = Some(density);
     }
 
-    /// If `true`, MozJPEG will try multiple progressive scan configurations and
-    /// pick the one that compresses best. This can noticeably reduce file size
-    /// for progressive JPEGs, at the cost of slower encoding.
+    /// If true, it will use MozJPEG's scan optimization. Makes progressive image files smaller.
     ///
-    /// Reset by both
-    /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode) (→ `true`) and
-    /// [`set_fastest_defaults()`](Self::set_fastest_defaults) (→ `false`).
-    /// Call those methods first.
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
     pub fn set_optimize_scans(&mut self, opt: bool) {
-        unsafe {
-            ffi::jpeg_c_set_bool_param(&mut self.cinfo, J_BOOLEAN_PARAM::JBOOLEAN_OPTIMIZE_SCANS, boolean::from(opt));
-        }
-        if !opt {
-            self.cinfo.scan_info = ptr::null();
-        }
+        self.pending.optimize_scans = Some(opt);
     }
 
-    /// Apply inter-block smoothing to reduce blocky artifacts in the output.
-    /// Values range from 0 (no smoothing, the default) to 100 (maximum).
-    /// Higher values reduce visible block boundaries but may soften fine detail.
+    /// If 1-100 (non-zero), it will use MozJPEG's smoothing.
     ///
-    /// This value is silently reset to 0 by
-    /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode) and
-    /// [`set_fastest_defaults()`](Self::set_fastest_defaults) due to the internal
-    /// `jpeg_set_defaults()` call. Call those methods *before* this one.
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
     pub fn set_smoothing_factor(&mut self, smoothing_factor: u8) {
-        self.cinfo.smoothing_factor = c_int::from(smoothing_factor);
+        self.pending.smoothing_factor = Some(smoothing_factor);
     }
 
-    /// Set to `false` to make files larger for no reason
+    /// Set to `false` to make files larger for no reason.
     ///
-    /// Enable optimized Huffman coding. When `true` (the default in MozJPEG),
-    /// the encoder computes custom Huffman tables from the actual image data,
-    /// typically reducing file size by 2–10%. When `false`, it uses fixed
-    /// default tables, which produce larger files.
-    ///
-    /// Reset by both
-    /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode) (→ `true`) and
-    /// [`set_fastest_defaults()`](Self::set_fastest_defaults) (→ `false`).
-    /// Call those methods first.
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
     pub fn set_optimize_coding(&mut self, opt: bool) {
-        self.cinfo.optimize_coding = boolean::from(opt);
+        self.pending.optimize_coding = Some(opt);
     }
 
-    /// Specifies whether multiple scan configurations should be evaluated
-    /// during trellis quantization. Trellis quantization finds the
-    /// least-distortion way to round DCT coefficients to the quantization grid;
-    /// enabling this option lets it also consider how different scan layouts
-    /// interact with that rounding, for marginally better compression.
+    /// Specifies whether multiple scans should be considered during trellis
+    /// quantization.
     ///
-    /// Reset to `false` by both
-    /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode) and
-    /// [`set_fastest_defaults()`](Self::set_fastest_defaults). Call those methods first.
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
     pub fn set_use_scans_in_trellis(&mut self, opt: bool) {
-        unsafe {
-            ffi::jpeg_c_set_bool_param(&mut self.cinfo, J_BOOLEAN_PARAM::JBOOLEAN_USE_SCANS_IN_TRELLIS, boolean::from(opt));
-        }
+        self.pending.use_scans_in_trellis = Some(opt);
     }
 
-    /// Enable progressive JPEG encoding (recommended)
+    /// You can only turn it on.
     ///
-    /// Progressive JPEGs render blurry-to-sharp
-    /// during download, instead of top-to-bottom like baseline JPEGs. They also
-    /// tend to compress slightly better. Once enabled,
-    /// progressive mode cannot be turned off without creating a new [`Compress`].
-    ///
-    /// Reset by [`set_fastest_defaults()`](Self::set_fastest_defaults).
-    /// Call that method first.
-    /// Not affected by [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode).
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
     pub fn set_progressive_mode(&mut self) {
-        unsafe {
-            ffi::jpeg_simple_progression(&mut self.cinfo);
-        }
+        self.pending.progressive_mode = true;
     }
 
-    /// Set how color channels are grouped into progressive scan passes.
-    /// [`AllComponentsTogether`](ScanMode::AllComponentsTogether) (recommended) encodes all
-    /// channels in each pass, giving the smoothest progressive display.
-    /// [`ScanPerComponent`](ScanMode::ScanPerComponent) separates channels, which can flash
-    /// grayscale or green during loading.
-    /// [`Auto`](ScanMode::Auto) lets MozJPEG decide.
+    /// One scan for all components looks best. Other options may flash grayscale or green images.
     ///
-    /// # Warning: resets other settings
-    ///
-    /// Internally calls `jpeg_set_defaults()`, which resets the following to their defaults:
-    ///
-    /// - [`set_raw_data_in()`](Self::set_raw_data_in) → `false`
-    /// - [`set_optimize_coding()`](Self::set_optimize_coding) → `true` (forced by mozjpeg profile)
-    /// - [`set_smoothing_factor()`](Self::set_smoothing_factor) → `0`
-    /// - [`set_pixel_density()`](Self::set_pixel_density) → lost (unit=0, 1×1)
-    /// - [`set_quality()`](Self::set_quality), [`set_luma_qtable()`](Self::set_luma_qtable),
-    ///   [`set_chroma_qtable()`](Self::set_chroma_qtable) → overwritten with quality-75 tables
-    /// - [`components_mut()`](Self::components_mut) — sampling factors, quantization table
-    ///   assignments, and Huffman table assignments all revert to colorspace defaults
-    ///   (e.g., 4:2:2 reverts to 4:2:0).
-    ///   Also affects [`set_chroma_sampling_pixel_sizes()`](Self::set_chroma_sampling_pixel_sizes).
-    /// - [`set_optimize_scans()`](Self::set_optimize_scans) → `true` (forced by mozjpeg profile)
-    /// - [`set_use_scans_in_trellis()`](Self::set_use_scans_in_trellis) → `false`
-    ///
-    /// **Call this method before** any of the above, or their values will be silently lost.
-    /// See also [`set_fastest_defaults()`](Self::set_fastest_defaults), which resets even more.
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
     pub fn set_scan_optimization_mode(&mut self, mode: ScanMode) {
-        let smoothing_factor = self.cinfo.smoothing_factor;
-        unsafe {
-            ffi::jpeg_c_set_int_param(&mut self.cinfo, J_INT_PARAM::JINT_DC_SCAN_OPT_MODE, mode as c_int);
-            ffi::jpeg_set_defaults(&mut self.cinfo);
-        }
-        self.cinfo.smoothing_factor = smoothing_factor;
+        self.pending.scan_mode = Some(mode);
     }
 
-    /// Reset to libjpeg v6 settings
+    /// Reset to libjpeg v6 settings.
     ///
     /// It gives files identical with libjpeg-turbo.
     ///
-    /// # Warning: resets other settings
-    ///
-    /// Internally calls `jpeg_set_defaults()` with JCP_FASTEST profile.
-    /// Resets everything that
-    /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode) resets, plus more:
-    ///
-    /// - [`set_raw_data_in()`](Self::set_raw_data_in) → `false`
-    /// - [`set_optimize_coding()`](Self::set_optimize_coding) → `false`
-    /// - [`set_smoothing_factor()`](Self::set_smoothing_factor) → `0`
-    /// - [`set_pixel_density()`](Self::set_pixel_density) → lost (unit=0, 1×1)
-    /// - [`set_quality()`](Self::set_quality), [`set_luma_qtable()`](Self::set_luma_qtable),
-    ///   [`set_chroma_qtable()`](Self::set_chroma_qtable) → overwritten with quality-75 tables
-    /// - [`components_mut()`](Self::components_mut) — sampling factors, quantization table
-    ///   assignments, and Huffman table assignments all revert to colorspace defaults
-    ///   (e.g., 4:2:2 reverts to 4:2:0).
-    ///   Also affects [`set_chroma_sampling_pixel_sizes()`](Self::set_chroma_sampling_pixel_sizes).
-    /// - [`set_progressive_mode()`](Self::set_progressive_mode) → lost (scan info cleared)
-    /// - [`set_optimize_scans()`](Self::set_optimize_scans) → `false`
-    /// - [`set_use_scans_in_trellis()`](Self::set_use_scans_in_trellis) → `false`
-    ///
-    /// **Call this method before** any of the above, or their values will be silently lost.
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
     pub fn set_fastest_defaults(&mut self) {
-        let smoothing_factor = self.cinfo.smoothing_factor;
-        unsafe {
-            ffi::jpeg_c_set_int_param(&mut self.cinfo, J_INT_PARAM::JINT_COMPRESS_PROFILE, ffi::JINT_COMPRESS_PROFILE_VALUE::JCP_FASTEST as c_int);
-            ffi::jpeg_set_defaults(&mut self.cinfo);
-        }
-        self.cinfo.smoothing_factor = smoothing_factor;
+        self.pending.fastest_defaults = true;
     }
 
-    /// Enable raw data mode for writing pre-downsampled YCbCr blocks
-    /// via [`write_raw_data()`](CompressStarted::write_raw_data) instead of scanlines.
+    /// Advanced. See `raw_data_in` in libjpeg docs.
     ///
-    /// Reset to `false` by both
-    /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode) and
-    /// [`set_fastest_defaults()`](Self::set_fastest_defaults). Call those methods first.
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
     pub fn set_raw_data_in(&mut self, opt: bool) {
-        self.cinfo.raw_data_in = boolean::from(opt);
+        self.pending.raw_data_in = Some(opt);
     }
 
-    /// Set image quality on a 1–100 scale. Values 60–80 are recommended.
-    /// Higher values produce larger, higher-fidelity files.
+    /// Set image quality. Values 60-80 are recommended.
     ///
-    /// Quantization table values are not clamped to the 8-bit range, so at low
-    /// quality settings (below ~50) some values may exceed 255 and produce
-    /// 16-bit DQT markers.
-    ///
-    /// Use [`set_quality_force_8bit`](Self::set_quality_force_8bit) to control
-    /// whether values are clamped to 1-255.
-    ///
-    /// Quantization tables are overwritten by
-    /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode) and
-    /// [`set_fastest_defaults()`](Self::set_fastest_defaults) (reset to quality 75).
-    /// Call those methods first.
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
     pub fn set_quality(&mut self, quality: f32) {
-        unsafe {
-            ffi::jpeg_set_quality(&mut self.cinfo, quality as c_int, boolean::from(false));
-        }
+        self.pending.quality = Some(quality.round() as i32);
     }
 
-    /// Set image quality with control over 8-bit quantization table clamping.
+    /// When `true`, quantization table values are clamped to 1-255 (8-bit DQT precision).
+    /// When `false` (the default), values can go up to 32767 (16-bit DQT precision).
     ///
-    /// When `force_8bit_quantization` is `true`, quantization table values are
-    /// clamped to 1-255 (8-bit DQT precision). When `false`, values can go up to
-    /// 32767 (16-bit DQT precision).
+    /// Applies to both `set_quality()` and custom quantization tables.
     ///
-    /// This only affects quantization table value range. It does NOT disable
-    /// progressive encoding, change the SOF marker type, or affect any other
-    /// encoding parameters.
-    ///
-    /// Corresponds to the `force_baseline` parameter in libjpeg's `jpeg_set_quality()`.
-    ///
-    /// Table contents are overwritten by
-    /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode) and
-    /// [`set_fastest_defaults()`](Self::set_fastest_defaults) (reset to quality 75).
-    /// Call those methods first.
-    pub fn set_quality_force_8bit(&mut self, quality: f32, force_8bit_quantization: bool) {
-        unsafe {
-            ffi::jpeg_set_quality(&mut self.cinfo, quality as c_int, boolean::from(force_8bit_quantization));
-        }
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
+    pub fn set_force_8bit_quantization(&mut self, force_8bit: bool) {
+        self.pending.force_8bit_quantization = force_8bit;
     }
 
     /// Instead of quality setting, use a specific quantization table.
     ///
-    /// Table values are clamped to 1-255 (8-bit DQT precision).
-    /// Use [`set_luma_qtable_force_8bit`](Self::set_luma_qtable_force_8bit) for explicit control.
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
     pub fn set_luma_qtable(&mut self, qtable: &QTable) {
-        unsafe {
-            ffi::jpeg_add_quant_table(&mut self.cinfo, 0, qtable.as_ptr(), 100, 1);
-        }
-    }
-
-    /// Instead of quality setting, use a specific quantization table with
-    /// control over 8-bit clamping.
-    ///
-    /// When `force_8bit_quantization` is `true`, table values are clamped to 1-255.
-    /// When `false`, values can go up to 32767.
-    ///
-    /// Corresponds to the `force_baseline` parameter in libjpeg's `jpeg_add_quant_table()`.
-    ///
-    /// Table contents are overwritten by
-    /// [`set_scan_optimization_mode()`](Self::set_scan_optimization_mode) and
-    /// [`set_fastest_defaults()`](Self::set_fastest_defaults) (reset to quality 75).
-    /// Call those methods first.
-    pub fn set_luma_qtable_force_8bit(&mut self, qtable: &QTable, force_8bit_quantization: bool) {
-        unsafe {
-            ffi::jpeg_add_quant_table(&mut self.cinfo, 0, qtable.as_ptr(), 100, boolean::from(force_8bit_quantization) as c_int);
-        }
+        self.pending.luma_qtable = Some(qtable.clone());
     }
 
     /// Instead of quality setting, use a specific quantization table for color.
     ///
-    /// Table values are clamped to 1-255 (8-bit DQT precision).
-    /// Use [`set_chroma_qtable_force_8bit`](Self::set_chroma_qtable_force_8bit) for explicit control.
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
     pub fn set_chroma_qtable(&mut self, qtable: &QTable) {
-        unsafe {
-            ffi::jpeg_add_quant_table(&mut self.cinfo, 1, qtable.as_ptr(), 100, 1);
-        }
+        self.pending.chroma_qtable = Some(qtable.clone());
     }
 
-    /// Instead of quality setting, use a specific quantization table for color
-    /// with control over 8-bit clamping.
-    ///
-    /// When `force_8bit_quantization` is `true`, table values are clamped to 1-255.
-    /// When `false`, values can go up to 32767.
-    ///
-    /// Corresponds to the `force_baseline` parameter in libjpeg's `jpeg_add_quant_table()`.
-    pub fn set_chroma_qtable_force_8bit(&mut self, qtable: &QTable, force_8bit_quantization: bool) {
-        unsafe {
-            ffi::jpeg_add_quant_table(&mut self.cinfo, 1, qtable.as_ptr(), 100, boolean::from(force_8bit_quantization) as c_int);
-        }
-    }
+
 
     /// Sets chroma subsampling, separately for Cb and Cr channels.
     /// Instead of setting samples per pixel, like in `cinfo`'s `x_samp_factor`,
@@ -633,15 +1027,19 @@ impl Compress {
     /// * `(1,1), (1,1)` == 4:4:4
     /// * `(2,1), (2,1)` == 4:2:2
     /// * `(2,2), (2,2)` == 4:2:0
+    ///
+    /// This setting is applied at [`start_compress()`](Self::start_compress) time,
+    /// so you can call configuration methods in any order.
     pub fn set_chroma_sampling_pixel_sizes(&mut self, cb: (u8, u8), cr: (u8, u8)) {
         let max_sampling_h = cb.0.max(cr.0);
         let max_sampling_v = cb.1.max(cr.1);
 
         let px_sizes = [(1, 1), cb, cr];
-        for (c, (h, v)) in self.components_mut().iter_mut().zip(px_sizes) {
-            c.h_samp_factor = (max_sampling_h / h).into();
-            c.v_samp_factor = (max_sampling_v / v).into();
-        }
+        let factors: Vec<(i32, i32)> = px_sizes
+            .iter()
+            .map(|(h, v)| ((max_sampling_h / h) as i32, (max_sampling_v / v) as i32))
+            .collect();
+        self.pending.subsampling = Some(factors);
     }
 }
 
@@ -690,71 +1088,498 @@ impl Drop for Compress {
 
 #[test]
 fn write_mem() {
-    let mut cinfo = Compress::new(ColorSpace::JCS_YCbCr);
+    let mut comp = Compress::new(ColorSpace::JCS_YCbCr);
 
-    assert_eq!(3, cinfo.components().len());
+    assert_eq!(3, comp.components().len());
 
-    cinfo.set_size(17, 33);
+    comp.set_size(17, 33);
 
-    #[allow(deprecated)] {
-        cinfo.set_gamma(1.0);
+    #[allow(deprecated)]
+    {
+        comp.set_gamma(1.0);
     }
 
-    cinfo.set_progressive_mode();
-    cinfo.set_scan_optimization_mode(ScanMode::AllComponentsTogether);
+    comp.set_progressive_mode();
+    comp.set_scan_optimization_mode(ScanMode::AllComponentsTogether);
 
-    cinfo.set_raw_data_in(true);
+    comp.set_raw_data_in(true);
 
-    cinfo.set_quality(88.);
+    comp.set_quality(88.);
 
-    cinfo.set_chroma_sampling_pixel_sizes((1, 1), (1, 1));
-    for c in cinfo.components() {
-        assert_eq!(c.v_samp_factor, 1);
-        assert_eq!(c.h_samp_factor, 1);
-    }
+    // With lazy config, subsampling is applied at start_compress time
+    comp.set_chroma_sampling_pixel_sizes((2, 2), (2, 2));
 
-    cinfo.set_chroma_sampling_pixel_sizes((2, 2), (2, 2));
-    for (c, samp) in cinfo.components().iter().zip([2, 1, 1]) {
+    let mut started = comp.start_compress(Vec::new()).unwrap();
+
+    // Now we can check the applied values
+    for (c, samp) in started.components().iter().zip([2, 1, 1]) {
         assert_eq!(c.v_samp_factor, samp);
         assert_eq!(c.h_samp_factor, samp);
     }
 
-    let mut cinfo = cinfo.start_compress(Vec::new()).unwrap();
+    started.write_marker(Marker::APP(2), b"Hello World");
 
-    cinfo.write_marker(Marker::APP(2), b"Hello World");
+    assert_eq!(24, started.components()[0].row_stride());
+    assert_eq!(40, started.components()[0].col_stride());
+    assert_eq!(16, started.components()[1].row_stride());
+    assert_eq!(24, started.components()[1].col_stride());
+    assert_eq!(16, started.components()[2].row_stride());
+    assert_eq!(24, started.components()[2].col_stride());
 
-    assert_eq!(24, cinfo.components()[0].row_stride());
-    assert_eq!(40, cinfo.components()[0].col_stride());
-    assert_eq!(16, cinfo.components()[1].row_stride());
-    assert_eq!(24, cinfo.components()[1].col_stride());
-    assert_eq!(16, cinfo.components()[2].row_stride());
-    assert_eq!(24, cinfo.components()[2].col_stride());
-
-    let bitmaps = cinfo
+    let bitmaps = started
         .components()
         .iter()
         .map(|c| vec![128u8; c.row_stride() * c.col_stride()])
         .collect::<Vec<_>>();
 
-    assert!(cinfo.write_raw_data(&bitmaps.iter().map(|c| &c[..]).collect::<Vec<_>>()));
+    assert!(started.write_raw_data(&bitmaps.iter().map(|c| &c[..]).collect::<Vec<_>>()));
 
-    cinfo.finish().unwrap();
+    started.finish().unwrap();
 }
 
 #[test]
 fn convert_colorspace() {
-    let mut cinfo = Compress::new(ColorSpace::JCS_RGB);
-    cinfo.set_color_space(ColorSpace::JCS_GRAYSCALE);
-    assert_eq!(1, cinfo.components().len());
+    let mut comp = Compress::new(ColorSpace::JCS_RGB);
+    comp.set_color_space(ColorSpace::JCS_GRAYSCALE);
 
-    cinfo.set_size(33, 15);
-    cinfo.set_quality(44.);
+    // components() applies pending config, so colorspace change is visible immediately
+    assert_eq!(1, comp.components().len()); // Grayscale after pending config applied
 
-    let mut cinfo = cinfo.start_compress(Vec::new()).unwrap();
+    comp.set_size(33, 15);
+    comp.set_quality(44.);
 
-    let scanlines = vec![127u8; 33*15*3];
-    cinfo.write_scanlines(&scanlines).unwrap();
+    let mut started = comp.start_compress(Vec::new()).unwrap();
 
-    let res = cinfo.finish().unwrap();
+    // After start_compress(), the colorspace is applied
+    assert_eq!(1, started.components().len()); // Now grayscale
+
+    let scanlines = vec![127u8; 33 * 15 * 3];
+    started.write_scanlines(&scanlines).unwrap();
+
+    let res = started.finish().unwrap();
     assert!(!res.is_empty());
+}
+
+// === Tests for deprecated methods and incremental config application ===
+
+#[test]
+#[allow(deprecated)]
+fn deprecated_components_mut_applies_pending_config() {
+    // Test that components_mut() applies pending config before returning
+    let mut comp = Compress::new(ColorSpace::JCS_RGB);
+    comp.set_size(64, 64);
+    comp.set_color_space(ColorSpace::JCS_YCbCr);
+    comp.set_quality(85.0);
+    comp.set_smoothing_factor(50);
+
+    // Before components_mut(), cinfo hasn't been updated
+    assert_eq!(3, comp.components().len()); // Still RGB components
+
+    // components_mut() triggers apply_pending_config()
+    let components = comp.components_mut();
+    assert_eq!(3, components.len()); // Now YCbCr (still 3 components)
+
+    // Verify smoothing was applied
+    assert_eq!(50, comp.cinfo.smoothing_factor);
+}
+
+#[test]
+#[allow(deprecated)]
+fn deprecated_components_mut_incremental_updates() {
+    // Test that settings added AFTER components_mut() are still applied at start_compress()
+    let mut comp = Compress::new(ColorSpace::JCS_RGB);
+    comp.set_size(64, 64);
+    comp.set_quality(85.0);
+
+    // First call to components_mut() applies quality=85
+    let _components = comp.components_mut();
+
+    // Add more settings after components_mut()
+    comp.set_smoothing_factor(75);
+    comp.set_optimize_coding(true);
+
+    // These should be applied at start_compress()
+    let pixels: Vec<u8> = vec![128u8; 64 * 64 * 3];
+    let mut started = comp.start_compress(Vec::new()).unwrap();
+
+    // Verify the new settings were applied
+    assert_eq!(75, started.compress.cinfo.smoothing_factor);
+    assert_ne!(0, started.compress.cinfo.optimize_coding);
+
+    started.write_scanlines(&pixels).unwrap();
+    started.finish().unwrap();
+}
+
+#[test]
+#[allow(deprecated)]
+fn deprecated_components_mut_multiple_calls() {
+    // Test multiple calls to components_mut() with settings in between
+    let mut comp = Compress::new(ColorSpace::JCS_RGB);
+    comp.set_size(64, 64);
+
+    // Set quality, then access components
+    comp.set_quality(70.0);
+    let _c1 = comp.components_mut();
+
+    // Add smoothing, then access components again
+    comp.set_smoothing_factor(30);
+    let _c2 = comp.components_mut();
+    assert_eq!(30, comp.cinfo.smoothing_factor);
+
+    // Add more settings
+    comp.set_optimize_coding(true);
+
+    // Final application at start_compress
+    let pixels: Vec<u8> = vec![128u8; 64 * 64 * 3];
+    let mut started = comp.start_compress(Vec::new()).unwrap();
+
+    assert_eq!(30, started.compress.cinfo.smoothing_factor);
+    assert_ne!(0, started.compress.cinfo.optimize_coding);
+
+    started.write_scanlines(&pixels).unwrap();
+    started.finish().unwrap();
+}
+
+#[test]
+fn mutate_components_last_runs_after_all_config() {
+    // Test that mutate_components_last callback runs after all other config
+    let mut comp = Compress::new(ColorSpace::JCS_RGB);
+    comp.set_size(64, 64);
+    comp.set_color_space(ColorSpace::JCS_YCbCr);
+    comp.set_scan_optimization_mode(ScanMode::Auto); // Would reset settings
+
+    // This callback should see the fully configured state
+    comp.mutate_components_last(|components| {
+        // Verify we have 3 YCbCr components
+        assert_eq!(3, components.len());
+        // Set custom subsampling
+        components[0].h_samp_factor = 2;
+        components[0].v_samp_factor = 2;
+        components[1].h_samp_factor = 1;
+        components[1].v_samp_factor = 1;
+        components[2].h_samp_factor = 1;
+        components[2].v_samp_factor = 1;
+    });
+
+    let pixels: Vec<u8> = vec![128u8; 64 * 64 * 3];
+    let mut started = comp.start_compress(Vec::new()).unwrap();
+
+    // Verify the callback's changes were applied
+    let comps = started.components();
+    assert_eq!(2, comps[0].h_samp_factor);
+    assert_eq!(2, comps[0].v_samp_factor);
+    assert_eq!(1, comps[1].h_samp_factor);
+
+    started.write_scanlines(&pixels).unwrap();
+    started.finish().unwrap();
+}
+
+#[test]
+fn mutate_cinfo_last_runs_after_all_config() {
+    // Test that mutate_cinfo_last callback runs after all other config
+    let mut comp = Compress::new(ColorSpace::JCS_RGB);
+    comp.set_size(64, 64);
+    comp.set_quality(85.0);
+    comp.set_smoothing_factor(25);
+    comp.set_scan_optimization_mode(ScanMode::Auto);
+
+    // This callback can override anything
+    comp.mutate_cinfo_last(|cinfo| {
+        // Override smoothing to a different value
+        cinfo.smoothing_factor = 99;
+    });
+
+    let pixels: Vec<u8> = vec![128u8; 64 * 64 * 3];
+    let mut started = comp.start_compress(Vec::new()).unwrap();
+
+    // The callback ran last and overrode the smoothing
+    assert_eq!(99, started.compress.cinfo.smoothing_factor);
+
+    started.write_scanlines(&pixels).unwrap();
+    started.finish().unwrap();
+}
+
+#[test]
+fn lazy_config_order_independence_comprehensive() {
+    // Comprehensive test that all settings work regardless of order
+    let pixels: Vec<u8> = (0..64 * 64 * 3).map(|i| (i % 256) as u8).collect();
+
+    // Helper to encode with a specific order of settings
+    let encode = |order: &str| -> Vec<u8> {
+        let mut comp = Compress::new(ColorSpace::JCS_RGB);
+
+        match order {
+            "normal" => {
+                comp.set_size(64, 64);
+                comp.set_color_space(ColorSpace::JCS_YCbCr);
+                comp.set_quality(75.0);
+                comp.set_smoothing_factor(20);
+                comp.set_chroma_sampling_pixel_sizes((2, 2), (2, 2));
+                comp.set_scan_optimization_mode(ScanMode::Auto);
+            }
+            "reversed" => {
+                comp.set_scan_optimization_mode(ScanMode::Auto);
+                comp.set_chroma_sampling_pixel_sizes((2, 2), (2, 2));
+                comp.set_smoothing_factor(20);
+                comp.set_quality(75.0);
+                comp.set_color_space(ColorSpace::JCS_YCbCr);
+                comp.set_size(64, 64);
+            }
+            "interleaved" => {
+                comp.set_scan_optimization_mode(ScanMode::Auto);
+                comp.set_size(64, 64);
+                comp.set_smoothing_factor(20);
+                comp.set_color_space(ColorSpace::JCS_YCbCr);
+                comp.set_chroma_sampling_pixel_sizes((2, 2), (2, 2));
+                comp.set_quality(75.0);
+            }
+            _ => panic!("Unknown order"),
+        }
+
+        let mut started = comp.start_compress(Vec::new()).unwrap();
+        started.write_scanlines(&pixels).unwrap();
+        started.finish().unwrap()
+    };
+
+    let normal = encode("normal");
+    let reversed = encode("reversed");
+    let interleaved = encode("interleaved");
+
+    // All orderings should produce identical output
+    assert_eq!(normal, reversed, "normal vs reversed should match");
+    assert_eq!(normal, interleaved, "normal vs interleaved should match");
+}
+
+#[test]
+#[allow(deprecated)]
+fn deprecated_then_new_api_works() {
+    // Test mixing deprecated components_mut() with new mutate_components_last()
+    let mut comp = Compress::new(ColorSpace::JCS_RGB);
+    comp.set_size(64, 64);
+    comp.set_quality(85.0);
+
+    // Use deprecated API first
+    {
+        let components = comp.components_mut();
+        components[0].h_samp_factor = 2;
+    }
+
+    // Then use new API - should still work
+    comp.set_smoothing_factor(40);
+    comp.mutate_components_last(|components| {
+        // This runs after everything else
+        components[0].v_samp_factor = 2;
+    });
+
+    let pixels: Vec<u8> = vec![128u8; 64 * 64 * 3];
+    let mut started = comp.start_compress(Vec::new()).unwrap();
+
+    // Verify both modifications were applied
+    let comps = started.components();
+    assert_eq!(2, comps[0].h_samp_factor); // From deprecated API
+    assert_eq!(2, comps[0].v_samp_factor); // From new API callback
+    assert_eq!(40, started.compress.cinfo.smoothing_factor);
+
+    started.write_scanlines(&pixels).unwrap();
+    started.finish().unwrap();
+}
+
+#[test]
+fn scan_mode_does_not_reset_quality() {
+    // This was the core bug: set_scan_optimization_mode() calls jpeg_set_defaults()
+    // which would reset quality. With lazy config, order shouldn't matter.
+    let pixels: Vec<u8> = vec![128u8; 64 * 64 * 3];
+
+    // Order 1: quality first, then scan mode
+    let mut comp1 = Compress::new(ColorSpace::JCS_RGB);
+    comp1.set_size(64, 64);
+    comp1.set_quality(50.0);
+    comp1.set_scan_optimization_mode(ScanMode::Auto);
+    let mut started1 = comp1.start_compress(Vec::new()).unwrap();
+    started1.write_scanlines(&pixels).unwrap();
+    let result1 = started1.finish().unwrap();
+
+    // Order 2: scan mode first, then quality
+    let mut comp2 = Compress::new(ColorSpace::JCS_RGB);
+    comp2.set_size(64, 64);
+    comp2.set_scan_optimization_mode(ScanMode::Auto);
+    comp2.set_quality(50.0);
+    let mut started2 = comp2.start_compress(Vec::new()).unwrap();
+    started2.write_scanlines(&pixels).unwrap();
+    let result2 = started2.finish().unwrap();
+
+    // Both should produce identical output
+    assert_eq!(
+        result1, result2,
+        "Order of set_quality and set_scan_optimization_mode should not matter"
+    );
+}
+
+#[test]
+fn scan_mode_does_not_reset_smoothing() {
+    let pixels: Vec<u8> = vec![128u8; 64 * 64 * 3];
+
+    // Smoothing first, then scan mode
+    let mut comp1 = Compress::new(ColorSpace::JCS_RGB);
+    comp1.set_size(64, 64);
+    comp1.set_smoothing_factor(80);
+    comp1.set_scan_optimization_mode(ScanMode::Auto);
+    let mut started1 = comp1.start_compress(Vec::new()).unwrap();
+    assert_eq!(80, started1.compress.cinfo.smoothing_factor);
+    started1.write_scanlines(&pixels).unwrap();
+    let result1 = started1.finish().unwrap();
+
+    // Scan mode first, then smoothing
+    let mut comp2 = Compress::new(ColorSpace::JCS_RGB);
+    comp2.set_size(64, 64);
+    comp2.set_scan_optimization_mode(ScanMode::Auto);
+    comp2.set_smoothing_factor(80);
+    let mut started2 = comp2.start_compress(Vec::new()).unwrap();
+    assert_eq!(80, started2.compress.cinfo.smoothing_factor);
+    started2.write_scanlines(&pixels).unwrap();
+    let result2 = started2.finish().unwrap();
+
+    assert_eq!(result1, result2);
+}
+
+#[test]
+fn fastest_defaults_does_not_reset_settings() {
+    let pixels: Vec<u8> = vec![128u8; 64 * 64 * 3];
+
+    // Settings first, then fastest_defaults
+    let mut comp1 = Compress::new(ColorSpace::JCS_RGB);
+    comp1.set_size(64, 64);
+    comp1.set_quality(60.0);
+    comp1.set_smoothing_factor(30);
+    comp1.set_fastest_defaults();
+    let mut started1 = comp1.start_compress(Vec::new()).unwrap();
+    assert_eq!(30, started1.compress.cinfo.smoothing_factor);
+    started1.write_scanlines(&pixels).unwrap();
+    let result1 = started1.finish().unwrap();
+
+    // fastest_defaults first, then settings
+    let mut comp2 = Compress::new(ColorSpace::JCS_RGB);
+    comp2.set_size(64, 64);
+    comp2.set_fastest_defaults();
+    comp2.set_quality(60.0);
+    comp2.set_smoothing_factor(30);
+    let mut started2 = comp2.start_compress(Vec::new()).unwrap();
+    assert_eq!(30, started2.compress.cinfo.smoothing_factor);
+    started2.write_scanlines(&pixels).unwrap();
+    let result2 = started2.finish().unwrap();
+
+    assert_eq!(result1, result2);
+}
+
+#[test]
+#[allow(deprecated)]
+fn raw_changes_preserved_after_deprecated_api() {
+    // Test that raw changes made via deprecated components_mut() are preserved
+    // when additional buffered settings are applied at start_compress()
+    let mut comp = Compress::new(ColorSpace::JCS_RGB);
+    comp.set_size(64, 64);
+    comp.set_color_space(ColorSpace::JCS_YCbCr);
+
+    // Apply pending config via deprecated API and make raw changes
+    {
+        let components = comp.components_mut();
+        components[0].h_samp_factor = 2;
+        components[0].v_samp_factor = 2;
+        components[1].h_samp_factor = 1;
+        components[1].v_samp_factor = 1;
+        components[2].h_samp_factor = 1;
+        components[2].v_samp_factor = 1;
+    }
+
+    // Add more buffered settings AFTER raw changes
+    comp.set_smoothing_factor(50);
+    comp.set_quality(75.0);
+
+    let pixels: Vec<u8> = vec![128u8; 64 * 64 * 3];
+    let mut started = comp.start_compress(Vec::new()).unwrap();
+
+    // Raw changes should be preserved
+    let comps = started.components();
+    assert_eq!(
+        2, comps[0].h_samp_factor,
+        "Raw h_samp_factor change should be preserved"
+    );
+    assert_eq!(
+        2, comps[0].v_samp_factor,
+        "Raw v_samp_factor change should be preserved"
+    );
+    assert_eq!(1, comps[1].h_samp_factor);
+
+    // Buffered settings should also be applied
+    assert_eq!(50, started.compress.cinfo.smoothing_factor);
+
+    started.write_scanlines(&pixels).unwrap();
+    started.finish().unwrap();
+}
+
+#[test]
+fn multiple_callbacks_run_in_order() {
+    let mut comp = Compress::new(ColorSpace::JCS_RGB);
+    comp.set_size(64, 64);
+
+    // Add multiple callbacks - they should run in order
+    comp.mutate_cinfo_last(|cinfo| {
+        cinfo.smoothing_factor = 10;
+    });
+    comp.mutate_cinfo_last(|cinfo| {
+        // This runs after, so it should override
+        cinfo.smoothing_factor = 20;
+    });
+    comp.mutate_cinfo_last(|cinfo| {
+        cinfo.smoothing_factor = 30;
+    });
+
+    let pixels: Vec<u8> = vec![128u8; 64 * 64 * 3];
+    let mut started = comp.start_compress(Vec::new()).unwrap();
+
+    // Last callback wins
+    assert_eq!(30, started.compress.cinfo.smoothing_factor);
+
+    started.write_scanlines(&pixels).unwrap();
+    started.finish().unwrap();
+}
+
+#[test]
+fn pixel_density_preserved_across_scan_mode() {
+    use crate::{PixelDensity, PixelDensityUnit};
+
+    let mut comp = Compress::new(ColorSpace::JCS_RGB);
+    comp.set_size(64, 64);
+    comp.set_pixel_density(PixelDensity {
+        unit: PixelDensityUnit::Inches,
+        x: 300,
+        y: 300,
+    });
+    comp.set_scan_optimization_mode(ScanMode::Auto);
+
+    let pixels: Vec<u8> = vec![128u8; 64 * 64 * 3];
+    let mut started = comp.start_compress(Vec::new()).unwrap();
+
+    assert_eq!(300, started.compress.cinfo.X_density);
+    assert_eq!(300, started.compress.cinfo.Y_density);
+
+    started.write_scanlines(&pixels).unwrap();
+    started.finish().unwrap();
+}
+
+#[test]
+fn progressive_mode_preserved_across_scan_mode() {
+    let mut comp = Compress::new(ColorSpace::JCS_RGB);
+    comp.set_size(64, 64);
+    comp.set_progressive_mode();
+    comp.set_scan_optimization_mode(ScanMode::Auto);
+
+    let pixels: Vec<u8> = vec![128u8; 64 * 64 * 3];
+    let mut started = comp.start_compress(Vec::new()).unwrap();
+
+    // Progressive mode should be set (scan_info not null means progressive)
+    assert!(!started.compress.cinfo.scan_info.is_null());
+
+    started.write_scanlines(&pixels).unwrap();
+    started.finish().unwrap();
 }

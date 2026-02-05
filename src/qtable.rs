@@ -5,6 +5,7 @@ use std::fmt;
 use std::os::raw::c_uint;
 type Coef = c_uint;
 
+#[derive(Clone)]
 pub struct QTable {
     pub(crate) coeffs: [Coef; 64],
 }

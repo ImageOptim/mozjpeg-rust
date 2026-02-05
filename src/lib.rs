@@ -66,12 +66,13 @@ fn recompress() {
 
     dinfo.finish().unwrap();
 
-    fn write_jpeg(bitmaps: &[&mut Vec<u8>; 3], samp_factors: &Vec<i32>, scale: (f32, f32)) -> Vec<u8> {
+    fn write_jpeg(bitmaps: &[&mut Vec<u8>; 3], samp_factors: &[i32], scale: (f32, f32)) -> Vec<u8> {
         let mut cinfo = Compress::new(ColorSpace::JCS_YCbCr);
 
         cinfo.set_size(45, 30);
 
-        #[allow(deprecated)] {
+        #[allow(deprecated)]
+        {
             cinfo.set_gamma(1.0);
         }
 
@@ -82,10 +83,13 @@ fn recompress() {
         cinfo.set_luma_qtable(&qtable::AnnexK_Luma.scaled(99. * scale.0, 90. * scale.1));
         cinfo.set_chroma_qtable(&qtable::AnnexK_Chroma.scaled(100. * scale.0, 60. * scale.1));
 
-        for (c, samp) in cinfo.components_mut().iter_mut().zip(samp_factors) {
-            c.v_samp_factor = *samp;
-            c.h_samp_factor = *samp;
-        }
+        let samp_factors = samp_factors.to_vec();
+        cinfo.mutate_components_last(move |comps| {
+            for (c, samp) in comps.iter_mut().zip(&samp_factors) {
+                c.v_samp_factor = *samp;
+                c.h_samp_factor = *samp;
+            }
+        });
 
         let mut cinfo = cinfo.start_compress(Vec::new()).unwrap();
 
