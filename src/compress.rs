@@ -57,7 +57,7 @@ pub enum ScanMode {
 }
 
 pub struct CompressStarted<W> {
-    compress: Compress,
+    compress: Box<Compress>,
     /// Safety: sensitive to drop order. Needs to be dropped after `Compress`
     dest_mgr: DestinationMgr<W>,
 }
@@ -125,7 +125,7 @@ impl Compress {
         let write_buffer_capacity = expected_file_size.clamp(1 << 12, 1 << 16);
 
         let mut started = CompressStarted {
-            compress: self,
+            compress: Box::new(self),
             dest_mgr: DestinationMgr::new(writer, write_buffer_capacity),
         };
         unsafe {
