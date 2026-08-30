@@ -5,7 +5,9 @@ use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
 use crate::component::CompInfoExt;
 use crate::errormgr::unwinding_error_mgr;
+use crate::errormgr::CountingErrorMgr;
 use crate::errormgr::ErrorMgr;
+use crate::errormgr::Warnings;
 use crate::ffi;
 use crate::ffi::jpeg_decompress_struct;
 use crate::ffi::DCTSIZE;
@@ -63,7 +65,7 @@ pub enum DctMethod {
 /// Use `Decompress` static methods instead of creating this directly
 pub struct DecompressBuilder<'markers> {
     save_markers: &'markers [Marker],
-    err_mgr: Option<Box<ErrorMgr>>,
+    err_mgr: Option<ErrorMgr>,
 }
 
 #[deprecated(note = "Renamed to DecompressBuilder")]
@@ -83,7 +85,7 @@ impl<'markers> DecompressBuilder<'markers> {
     #[inline]
     #[must_use]
     pub fn with_err(mut self, err: ErrorMgr) -> Self {
-        self.err_mgr = Some(Box::new(err));
+        self.err_mgr = Some(err);
         self
     }
 
@@ -138,7 +140,7 @@ impl<'markers> Default for DecompressBuilder<'markers> {
 /// ```
 pub struct Decompress<R> {
     cinfo: jpeg_decompress_struct,
-    err_mgr: Box<ErrorMgr>,
+    err_mgr: Box<CountingErrorMgr>,
     src_mgr: Option<Box<SourceMgr<R>>>,
 }
 
@@ -236,7 +238,13 @@ impl<R> Decompress<R> {
 
     fn from_builder_and_reader(builder: DecompressBuilder<'_>, reader: R) -> io::Result<Self> where R: BufRead {
         let src_mgr = Box::new(SourceMgr::new(reader)?);
-        let err_mgr = builder.err_mgr.unwrap_or_else(unwinding_error_mgr);
+        let mut err_mgr = match builder.err_mgr {
+            Some(err) => Box::new(CountingErrorMgr::new(err)),
+            None => unwinding_error_mgr(),
+        };
+        // Taken before the move: `Box` keeps its address, and `addr_of_mut!` avoids a
+        // reference that a later shared borrow would invalidate.
+        let err_ptr = addr_of_mut!(err_mgr.as_mut().base);
         unsafe {
             let mut newself = Decompress {
                 cinfo: mem::zeroed(),
@@ -244,7 +252,7 @@ impl<R> Decompress<R> {
                 err_mgr,
             };
             let src_ptr = newself.src_mgr.as_mut().unwrap().iface_c_ptr();
-            newself.cinfo.common.err = addr_of_mut!(*newself.err_mgr);
+            newself.cinfo.common.err = err_ptr;
             ffi::jpeg_create_decompress(&mut newself.cinfo);
             newself.cinfo.src = src_ptr;
             for &marker in builder.save_markers {
@@ -253,6 +261,17 @@ impl<R> Decompress<R> {
             newself.read_header()?;
             Ok(newself)
         }
+    }
+
+    /// The recoverable conditions reported so far, which after construction means the
+    /// header read. See [`DecompressStarted::warnings`] for the decode itself.
+    ///
+    /// Empty when the manager came from [`DecompressBuilder::with_err`], which brings its
+    /// own `emit_message`.
+    #[inline]
+    #[must_use]
+    pub fn warnings(&self) -> Warnings {
+        self.err_mgr.warnings()
     }
 
     #[inline]
@@ -457,6 +476,17 @@ impl<R> DecompressStarted<R> {
         } else {
             io_suspend_err()
         }
+    }
+
+    /// The recoverable conditions libjpeg has reported for this image.
+    ///
+    /// Read it after the scanlines: an entropy-coding fault is found while decoding, not
+    /// while starting. Non-empty means libjpeg substituted data and carried on, so the
+    /// pixels are partly fabricated.
+    #[inline]
+    #[must_use]
+    pub fn warnings(&self) -> Warnings {
+        self.dec.warnings()
     }
 
     #[must_use]

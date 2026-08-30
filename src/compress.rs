@@ -3,7 +3,9 @@ use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
 use crate::component::CompInfoExt;
 use crate::errormgr::unwinding_error_mgr;
+use crate::errormgr::CountingErrorMgr;
 use crate::errormgr::ErrorMgr;
+use crate::errormgr::Warnings;
 use crate::fail;
 use crate::ffi;
 use crate::ffi::boolean;
@@ -37,9 +39,9 @@ pub const MAX_COMPONENTS: usize = 4;
 pub struct Compress {
     cinfo: jpeg_compress_struct,
 
-    /// It's `Box<ErrorMgr>`, but `cinfo` references `own_err`,
+    /// It's `Box<CountingErrorMgr>`, but `cinfo` references `own_err`,
     /// so I need talismans to ward off nasal demons haunting self-referential structs
-    own_err: *mut ErrorMgr,
+    own_err: *mut CountingErrorMgr,
     _it_is_self_referential: PhantomPinned,
 }
 
@@ -76,7 +78,7 @@ impl Compress {
     /// which strictly speaking is not guaranteed to work in Rust (but seems to work fine, at least on x86-64 and ARM).
     #[must_use]
     pub fn new(color_space: ColorSpace) -> Self {
-        Self::new_err(unwinding_error_mgr(), color_space)
+        Self::with_mgr(unwinding_error_mgr(), color_space)
     }
 
     /// Use a specific error handler instead of the default unwinding one.
@@ -87,13 +89,33 @@ impl Compress {
     /// `color_space` refers to input color space
     #[must_use]
     pub fn new_err(err: Box<ErrorMgr>, color_space: ColorSpace) -> Self {
+        Self::with_mgr(Box::new(CountingErrorMgr::new(*err)), color_space)
+    }
+
+    /// The recoverable conditions libjpeg reported while encoding.
+    ///
+    /// Empty when the manager came from [`Compress::new_err`], which brings its own
+    /// `emit_message`.
+    #[inline]
+    #[must_use]
+    pub fn warnings(&self) -> Warnings {
+        // SAFETY: `own_err` is a live `Box::into_raw` allocation, freed only in `Drop`.
+        unsafe { (*self.own_err).warnings() }
+    }
+
+    fn with_mgr(err: Box<CountingErrorMgr>, color_space: ColorSpace) -> Self {
+        let own_err = Box::into_raw(err);
+        // SAFETY: `own_err` is a fresh `Box::into_raw` allocation. `addr_of_mut!` rather
+        // than a reference, because libjpeg writes through this pointer for the whole
+        // encode and nothing may invalidate it.
+        let err_ptr = unsafe { addr_of_mut!((*own_err).base) };
         unsafe {
             let mut newself = Self {
                 cinfo: mem::zeroed(),
-                own_err: Box::into_raw(err),
+                own_err,
                 _it_is_self_referential: PhantomPinned,
             };
-            newself.cinfo.common.err = addr_of_mut!(*newself.own_err);
+            newself.cinfo.common.err = err_ptr;
 
             let s = mem::size_of_val(&newself.cinfo);
             ffi::jpeg_CreateCompress(&mut newself.cinfo, JPEG_LIB_VERSION, s);
