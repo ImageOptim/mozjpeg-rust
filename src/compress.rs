@@ -2,6 +2,7 @@ use crate::{colorspace::ColorSpace, PixelDensity};
 use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
 use crate::component::CompInfoExt;
+use crate::decompress::DctMethod;
 use crate::errormgr::unwinding_error_mgr;
 use crate::errormgr::ErrorMgr;
 use crate::fail;
@@ -454,6 +455,20 @@ impl Compress {
         }
     }
 
+    /// Selects the algorithm used for the DCT step.
+    ///
+    /// Mirrors [`Decompress::dct_method()`](crate::Decompress::dct_method) for the
+    /// encoder side. libjpeg's `dct_method` is read by both the compressor and the
+    /// decompressor, and `cjpeg`/`djpeg` expose `-dct` on both, but until now the
+    /// setting was reachable on decompression only.
+    pub fn set_dct_method(&mut self, method: DctMethod) {
+        self.cinfo.dct_method = match method {
+            DctMethod::IntegerSlow => ffi::J_DCT_METHOD::JDCT_ISLOW,
+            DctMethod::IntegerFast => ffi::J_DCT_METHOD::JDCT_IFAST,
+            DctMethod::Float => ffi::J_DCT_METHOD::JDCT_FLOAT,
+        }
+    }
+
     /// Set how color channels are grouped into progressive scan passes.
     /// [`AllComponentsTogether`](ScanMode::AllComponentsTogether) (recommended) encodes all
     /// channels in each pass, giving the smoothest progressive display.
@@ -757,4 +772,21 @@ fn convert_colorspace() {
 
     let res = cinfo.finish().unwrap();
     assert!(!res.is_empty());
+}
+
+#[test]
+fn set_dct_method_encodes() {
+    for method in [DctMethod::IntegerSlow, DctMethod::IntegerFast, DctMethod::Float] {
+        let mut cinfo = Compress::new(ColorSpace::JCS_RGB);
+        cinfo.set_size(24, 16);
+        cinfo.set_quality(75.);
+        cinfo.set_dct_method(method);
+
+        let mut cinfo = cinfo.start_compress(Vec::new()).unwrap();
+        cinfo.write_scanlines(&vec![64u8; 24 * 16 * 3]).unwrap();
+
+        let res = cinfo.finish().unwrap();
+        assert!(!res.is_empty(), "{method:?} produced no output");
+        assert_eq!(&res[..2], &[0xFF, 0xD8], "{method:?} produced no SOI");
+    }
 }
