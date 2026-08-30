@@ -5,7 +5,9 @@ use crate::colorspace::ColorSpaceExt;
 use crate::component::CompInfo;
 use crate::component::CompInfoExt;
 use crate::errormgr::unwinding_error_mgr;
+use crate::errormgr::CountingErrorMgr;
 use crate::errormgr::ErrorMgr;
+use crate::errormgr::Warnings;
 use crate::ffi;
 use crate::ffi::jpeg_decompress_struct;
 use crate::ffi::DCTSIZE;
@@ -63,7 +65,7 @@ pub enum DctMethod {
 /// Use `Decompress` static methods instead of creating this directly
 pub struct DecompressBuilder<'markers> {
     save_markers: &'markers [Marker],
-    err_mgr: Option<Box<ErrorMgr>>,
+    err_mgr: Option<ErrorMgr>,
 }
 
 #[deprecated(note = "Renamed to DecompressBuilder")]
@@ -83,7 +85,7 @@ impl<'markers> DecompressBuilder<'markers> {
     #[inline]
     #[must_use]
     pub fn with_err(mut self, err: ErrorMgr) -> Self {
-        self.err_mgr = Some(Box::new(err));
+        self.err_mgr = Some(err);
         self
     }
 
@@ -138,7 +140,9 @@ impl<'markers> Default for DecompressBuilder<'markers> {
 /// ```
 pub struct Decompress<R> {
     cinfo: jpeg_decompress_struct,
-    err_mgr: Box<ErrorMgr>,
+    /// A `Box<CountingErrorMgr>` held raw, because `cinfo.common.err` points into it and a
+    /// `Box` deref would assert uniqueness over that pointer. Freed in `Drop`.
+    err_mgr: *mut CountingErrorMgr,
     src_mgr: Option<Box<SourceMgr<R>>>,
 }
 
@@ -236,7 +240,15 @@ impl<R> Decompress<R> {
 
     fn from_builder_and_reader(builder: DecompressBuilder<'_>, reader: R) -> io::Result<Self> where R: BufRead {
         let src_mgr = Box::new(SourceMgr::new(reader)?);
-        let err_mgr = builder.err_mgr.unwrap_or_else(unwinding_error_mgr);
+        let err_mgr = Box::into_raw(match builder.err_mgr {
+            Some(err) => Box::new(CountingErrorMgr::new(err)),
+            None => unwinding_error_mgr(),
+        });
+        // SAFETY: a fresh `Box::into_raw` allocation. Kept as a raw pointer rather than a
+        // `Box`, and read through `addr_of_mut!` rather than a reference, because libjpeg
+        // writes through this pointer for the whole decode: a `Box` deref asserts
+        // uniqueness and would invalidate it. `Compress` holds its manager the same way.
+        let err_ptr = unsafe { addr_of_mut!((*err_mgr).base) };
         unsafe {
             let mut newself = Decompress {
                 cinfo: mem::zeroed(),
@@ -244,7 +256,7 @@ impl<R> Decompress<R> {
                 err_mgr,
             };
             let src_ptr = newself.src_mgr.as_mut().unwrap().iface_c_ptr();
-            newself.cinfo.common.err = addr_of_mut!(*newself.err_mgr);
+            newself.cinfo.common.err = err_ptr;
             ffi::jpeg_create_decompress(&mut newself.cinfo);
             newself.cinfo.src = src_ptr;
             for &marker in builder.save_markers {
@@ -253,6 +265,19 @@ impl<R> Decompress<R> {
             newself.read_header()?;
             Ok(newself)
         }
+    }
+
+    /// The recoverable conditions reported so far, which after construction means the
+    /// header read. See [`DecompressStarted::finish_with_warnings`] for the decode itself.
+    ///
+    /// Empty when the manager came from [`DecompressBuilder::with_err`], which brings its
+    /// own `emit_message`.
+    #[inline]
+    #[must_use]
+    pub fn warnings(&self) -> Warnings {
+        // SAFETY: `err_mgr` is a live `Box::into_raw` allocation, freed only in `Drop`.
+        // Read through the pointer, never through a reference to the `Box`.
+        unsafe { (*self.err_mgr).warnings() }
     }
 
     #[inline]
@@ -459,6 +484,17 @@ impl<R> DecompressStarted<R> {
         }
     }
 
+    /// The recoverable conditions libjpeg has reported for this image.
+    ///
+    /// Read it after the scanlines: an entropy-coding fault is found while decoding, not
+    /// while starting. Non-empty means libjpeg substituted data and carried on, so the
+    /// pixels are partly fabricated.
+    #[inline]
+    #[must_use]
+    pub fn warnings(&self) -> Warnings {
+        self.dec.warnings()
+    }
+
     #[must_use]
     pub fn color_space(&self) -> ColorSpace {
         self.dec.out_color_space()
@@ -662,6 +698,21 @@ impl<R> DecompressStarted<R> {
         self.finish_internal()
     }
 
+    /// Finish decompress and return every recoverable condition reported for the image.
+    ///
+    /// Prefer this to reading [`DecompressStarted::warnings`] before [`finish`]: libjpeg
+    /// reads on to the end-of-image marker inside `jpeg_finish_decompress`, and
+    /// `next_marker` warns there about extraneous data before that marker. For a baseline
+    /// single-scan image that warning therefore arrives *after* the last scanline, so a
+    /// snapshot taken before finishing misses it entirely.
+    ///
+    /// [`finish`]: DecompressStarted::finish
+    #[inline]
+    pub fn finish_with_warnings(mut self) -> io::Result<Warnings> {
+        self.finish_internal()?;
+        Ok(self.dec.warnings())
+    }
+
     #[inline]
     fn finish_internal(&mut self) -> io::Result<()> {
         if 0 != unsafe { ffi::jpeg_finish_decompress(&mut self.dec.cinfo) } {
@@ -681,6 +732,8 @@ impl<R> Drop for Decompress<R> {
     fn drop(&mut self) {
         unsafe {
             ffi::jpeg_destroy_decompress(&mut self.cinfo);
+            // After `cinfo` can no longer reference it, as in `Compress`.
+            let _ = Box::from_raw(self.err_mgr);
         }
     }
 }
