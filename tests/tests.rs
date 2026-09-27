@@ -106,10 +106,17 @@ fn icc_profile() {
     assert_eq!(ColorSpace::JCS_YCbCr, d.color_space());
     assert_eq!(10, d.markers().count()); // 9 for icc profile
 
-    // silly checks
-    d.markers().skip(1).for_each(|marker| {
+    // Each chunk is `ICC_PROFILE\0`, its sequence number counted from 1 (ICC.1, Annex B.4), the
+    // chunk count, then its part of the profile; together the parts are the whole profile.
+    let chunks: Vec<_> = d.markers().skip(1).collect();
+    let mut profile = Vec::new();
+    for (index, marker) in chunks.iter().enumerate() {
         assert!(marker.data.starts_with(b"ICC_PROFILE\0"));
-    });
+        assert_eq!(usize::from(marker.data[12]), index + 1, "sequence number");
+        assert_eq!(usize::from(marker.data[13]), chunks.len(), "chunk count");
+        profile.extend_from_slice(&marker.data[14..]);
+    }
+    assert_eq!(profile, std::fs::read("tests/test.icc").unwrap());
 
     let image = d.rgb().unwrap();
     assert_eq!(45, image.width());
