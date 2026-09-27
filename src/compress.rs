@@ -177,7 +177,8 @@ impl<W> CompressStarted<W> {
         chunks.enumerate().for_each(move |(current_marker, chunk)| {
             buf.clear();
             buf.extend_from_slice(b"ICC_PROFILE\0");
-            buf.extend([current_marker as u8, num_chunks as u8]);
+            // ICC.1, Annex B.4: chunks are numbered from 1, as libjpeg's jpeg_write_icc_profile does.
+            buf.extend([(current_marker + 1) as u8, num_chunks as u8]);
             buf.extend_from_slice(chunk);
 
             self.write_marker(Marker::APP(2), &buf);
