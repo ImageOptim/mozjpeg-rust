@@ -483,8 +483,14 @@ impl<R> DecompressStarted<R> {
         }
     }
 
+    /// Append one iMCU row: `v_samp_factor * 8` rows of each component,
+    /// `row_stride()` bytes each, to `image_dest[i]`. Needs `raw_data_out`.
+    ///
+    /// This is the incremental form of [`Self::read_raw_data`]: the image
+    /// holds `ceil(height / (max_v_samp_factor * 8))` iMCU rows, and rows
+    /// past the image height are padding.
     #[track_caller]
-    fn read_raw_data_chunk(&mut self, image_dest: &mut [&mut Vec<ffi::JSAMPLE>]) {
+    pub fn read_raw_data_chunk(&mut self, image_dest: &mut [&mut Vec<ffi::JSAMPLE>]) {
         assert!(0 != self.dec.cinfo.raw_data_out, "Raw data not set");
 
         let mcu_height = self.dec.cinfo.max_v_samp_factor as usize * DCTSIZE;
